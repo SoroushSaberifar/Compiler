@@ -1,0 +1,8 @@
+class MyClass {
+    int x;
+    
+    public void myMethod(int a, int b) {
+        int y;
+        y = a + b;
+    }
+}

@@ -1,16 +1,44 @@
 # Binaries
 *.class
 *.jar
+*.war
+*.ear
 
-# Generated sources (ANTLR output)
+# ANTLR generated files
+grammar/.antlr/
+grammar/*.interp
+grammar/*.tokens
+grammar/*.java
+!grammar/*.g4
+
+# Generated sources
 gen/
 target/
+out/
+build/
+bin/
 
 # IDE files
 .vscode/
 .idea/
 *.iml
+.settings/
+.project
+.classpath
 
 # OS files
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Temp files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Test outputs
+test/output/
