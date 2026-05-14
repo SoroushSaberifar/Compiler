@@ -1,8 +1,181 @@
-class MyClass {
-    int x;
-    
-    public void myMethod(int a, int b) {
-        int y;
-        y = a + b;
+import java.util.*;
+import java.lang.*;
+
+class Main {
+    public static void main(String[] args) {
+        int x;
+        x = 10;
+        print("Result: ");
+        print(x);
+    }
+}
+
+abstract class Animal {
+    protected String name;
+    private int age;
+
+    public Animal(String name, int age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    public abstract void makeSound();
+
+    public void display() {
+        print("Name: ");
+        print(this.name);
+        print(", Age: ");
+        print(this.age);
+    }
+}
+
+class Dog extends Animal implements Pet, Comparable {
+    private String breed;
+    public static final int MAX_AGE = 20;
+
+    public Dog(String name, int age, String breed) {
+        super(name, age);
+        this.breed = breed;
+    }
+
+    @Override
+    public void makeSound() {
+        print("Woof!");
+    }
+
+    @Override
+    public void play() {
+        print("Dog is playing");
+    }
+
+    public void bark(int times) {
+        int i;
+        i = 0;
+        while (i < times) {
+            print("bark ");
+            i = i + 1;
+        }
+    }
+
+    public void forExample() {
+        int sum;
+        sum = 0;
+        for (int j = 0; j < 10; j = j + 1) {
+            sum = sum + j;
+        }
+        print(sum);
+    }
+
+    public int compareTo(Object other) {
+        if (this.age > ((Dog)other).age) {
+            return 1;
+        } else {
+            if (this.age < ((Dog)other).age) {
+                return -1;
+            } else {
+                return 0;
+            }
+        }
+    }
+}
+
+interface Pet {
+    void play();
+}
+
+interface Comparable {
+    int compareTo(Object other);
+}
+
+interface Constants {
+    int DEFAULT_SIZE = 100;
+    String DEFAULT_NAME = "Unknown";
+}
+
+class Calculator {
+    public int add(int a, int b) {
+        return a + b;
+    }
+
+    public int add(int a, int b, int c) {
+        return a + b + c;
+    }
+
+    public double add(double a, double b) {
+        return a + b;
+    }
+
+    public static void main(String[] args) {
+        int[] arr;
+        arr = new int[5];
+        arr[0] = 10;
+        arr[1] = 20;
+        int len;
+        len = arr.length;
+        print(len);
+        Calculator calc;
+        calc = new Calculator();
+        print(calc.add(5, 10));
+        print(calc.add(5, 10, 15));
+        print(calc.add(2.5, 3.5));
+    }
+}
+
+class ArrayTest {
+    public void test() {
+        int[] nums;
+        nums = new int[]{1, 2, 3, 4, 5};
+        int i;
+        i = 0;
+        while (i < nums.length) {
+            print(nums[i]);
+            i = i + 1;
+        }
+    }
+}
+
+class ReadTest {
+    public void readInput() {
+        int value;
+        read(value);
+        print(value);
+    }
+}
+
+class BreakContinueTest {
+    public void loop() {
+        int i;
+        i = 0;
+        while (i < 10) {
+            if (i == 5) {
+                break;
+            }
+            print(i);
+            i = i + 1;
+        }
+        i = 0;
+        while (i < 10) {
+            i = i + 1;
+            if (i % 2 == 0) {
+                continue;
+            }
+            print(i);
+        }
+    }
+}
+
+class ExpressionTest {
+    public void testExpr() {
+        int a, b, c;
+        a = 5;
+        b = 3;
+        c = a + b * 2;
+        c = (a + b) * 2;
+        boolean flag;
+        flag = (a > b) && (c < 10) || !(a == b);
+        int power;
+        power = a ** 2;
+        int mod;
+        mod = 10 % 3;
     }
 }
