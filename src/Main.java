@@ -1,6 +1,6 @@
 import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.tree.*;
-import org.antlr.v4.runtime.CharStreams;
+
 import java.io.*;
 import java.util.*;
 import grammar.javaMinusMinus2Lexer;
@@ -71,6 +71,7 @@ public class Main {
         });
         ParseTree tree = parser.program();
         CompleteSymbolTableBuilder builder = new CompleteSymbolTableBuilder(globalTable);
+        globalTable.disableErrorReporting();
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(builder, tree);
     }

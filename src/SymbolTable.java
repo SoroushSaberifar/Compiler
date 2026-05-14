@@ -14,6 +14,7 @@ public class SymbolTable {
     private static int nextScopeId = 0;
 
     private List<String> semanticErrors;
+    private boolean errorReportingEnabled; 
 
     public SymbolTable(ScopeType type, String name, SymbolTable parent) {
         this.symbols = new LinkedHashMap<>();
@@ -23,14 +24,25 @@ public class SymbolTable {
         this.parentScope = parent;
         this.scopeId = nextScopeId++;
         this.semanticErrors = new ArrayList<>();
+        this.errorReportingEnabled = true;
         if (parent != null) {
             parent.childScopes.add(this);
         }
     }
 
+    public void disableErrorReporting() {
+        this.errorReportingEnabled = false;
+    }
+
+    public void enableErrorReporting() {
+        this.errorReportingEnabled = true;
+    }
+
     public void addSemanticError(String error) {
-        semanticErrors.add(error);
-        System.err.println("Semantic error: " + error);
+        if (errorReportingEnabled) {
+            semanticErrors.add(error);
+            System.err.println("Semantic error: " + error);
+        }
     }
 
     public List<String> getSemanticErrors() {
@@ -43,6 +55,17 @@ public class SymbolTable {
 
         if (existing == null) {
             symbols.put(name, info);
+            return;
+        }
+
+        if (!errorReportingEnabled) {
+            if (info.symbolType == SymbolInfo.SymbolType.METHOD ||
+                info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
+                String uniqueName = name + "_" + info.getParameterString();
+                symbols.put(uniqueName, info);
+            } else {
+                return;
+            }
             return;
         }
 
@@ -76,16 +99,40 @@ public class SymbolTable {
         return true;
     }
 
+    public void insertForce(SymbolInfo info) {
+        String key = info.name;
+        if (info.symbolType == SymbolInfo.SymbolType.METHOD ||
+            info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
+            key = info.name + info.getParameterString();
+        }
+        symbols.put(key, info);
+    }
+
     public SymbolInfo lookup(String name) {
         if (symbols.containsKey(name))
             return symbols.get(name);
+        
+        for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
+            if (entry.getKey().startsWith(name + "(")) {
+                return entry.getValue();
+            }
+        }
+        
         if (parentScope != null)
             return parentScope.lookup(name);
         return null;
     }
 
     public SymbolInfo lookupCurrentScopeOnly(String name) {
-        return symbols.get(name);
+        if (symbols.containsKey(name))
+            return symbols.get(name);
+        
+        for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
+            if (entry.getKey().startsWith(name + "(")) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     public boolean contains(String name) {
@@ -168,7 +215,9 @@ public class SymbolTable {
             System.out.println(indentStr + "│  (no symbols)");
         } else {
             for (SymbolInfo sym : symbols.values()) {
-                System.out.println(indentStr + "│  • " + sym.toString());
+                if (!sym.name.startsWith("_")) {
+                    System.out.println(indentStr + "│  • " + sym.toString());
+                }
             }
         }
         for (SymbolTable child : childScopes) {
@@ -186,13 +235,15 @@ public class SymbolTable {
         if (!symbols.isEmpty() || !childScopes.isEmpty()) {
             System.out.println(indentStr + "[" + scopeType + (scopeName != null ? ": " + scopeName : "") + "]");
             for (SymbolInfo sym : symbols.values()) {
-                String typeStr = sym.symbolType.toString().substring(0,
-                        Math.min(3, sym.symbolType.toString().length()));
-                System.out.println(indentStr + "  " + typeStr + " " + sym.name
-                        + (sym.dataType != null ? " : " + sym.dataType : ""));
-                if (sym.overloads != null) {
-                    for (SymbolInfo ov : sym.overloads) {
-                        System.out.println(indentStr + "    overload: " + ov.name + ov.getParameterString());
+                if (!sym.name.startsWith("_")) {
+                    String typeStr = sym.symbolType.toString().substring(0,
+                            Math.min(3, sym.symbolType.toString().length()));
+                    System.out.println(indentStr + "  " + typeStr + " " + sym.name
+                            + (sym.dataType != null ? " : " + sym.dataType : ""));
+                    if (sym.overloads != null) {
+                        for (SymbolInfo ov : sym.overloads) {
+                            System.out.println(indentStr + "    overload: " + ov.name + ov.getParameterString());
+                        }
                     }
                 }
             }
@@ -216,7 +267,9 @@ public class SymbolTable {
             sb.append(" (").append(scopeName).append(")");
         sb.append("\n");
         for (SymbolInfo sym : symbols.values()) {
-            sb.append(indentStr).append("  - ").append(sym).append("\n");
+            if (!sym.name.startsWith("_")) {
+                sb.append(indentStr).append("  - ").append(sym).append("\n");
+            }
         }
         for (SymbolTable child : childScopes) {
             child.toStringRecursive(sb, indent + 1);

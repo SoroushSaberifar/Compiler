@@ -18,8 +18,14 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
     }
 
     private void popScope() {
+        if (scopeStack.isEmpty()) {
+            System.err.println("ERROR: Attempted to pop from empty stack!");
+            return;
+        }
         scopeStack.pop();
-        currentScope = scopeStack.peek();
+        if (!scopeStack.isEmpty()) {
+            currentScope = scopeStack.peek();
+        }
     }
 
     private SymbolInfo.AccessModifier getAccessModifier(javaMinusMinus2Parser.AccessModifierContext ctx) {
@@ -39,7 +45,30 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         }
     }
 
-    // ======================== حلقه for ========================
+    @Override
+    public void enterImportDecl(javaMinusMinus2Parser.ImportDeclContext ctx) {
+        StringBuilder importPath = new StringBuilder();
+        
+        for (int i = 0; i < ctx.Identifier().size(); i++) {
+            if (i > 0) importPath.append(".");
+            importPath.append(ctx.Identifier(i).getText());
+        }
+        
+        if (ctx.getChildCount() > 0) {
+            String lastChild = ctx.getChild(ctx.getChildCount() - 2).getText();
+            if (lastChild.equals("*")) {
+                importPath.append(".*");
+            }
+        }
+        
+        if (currentScope.getScopeType() == SymbolTable.ScopeType.GLOBAL) {
+            SymbolInfo importInfo = new SymbolInfo(importPath.toString(), SymbolInfo.SymbolType.IMPORT);
+            importInfo.dataType = "import";
+            importInfo.scopeLevel = "global";
+            currentScope.insert(importInfo);
+        }
+    }
+
     @Override
     public void enterForStmt(javaMinusMinus2Parser.ForStmtContext ctx) {
         SymbolTable forScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "for-loop", currentScope);
@@ -51,11 +80,38 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         popScope();
     }
 
-    // ======================== mainClass ========================
+    @Override
+    public void enterWhileStmt(javaMinusMinus2Parser.WhileStmtContext ctx) {
+        SymbolTable whileScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "while-loop", currentScope);
+        pushScope(whileScope);
+    }
+
+    @Override
+    public void exitWhileStmt(javaMinusMinus2Parser.WhileStmtContext ctx) {
+        popScope();
+    }
+
+    @Override
+    public void enterIfElseStmt(javaMinusMinus2Parser.IfElseStmtContext ctx) {
+        SymbolTable ifScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "if-statement", currentScope);
+        pushScope(ifScope);
+    }
+
+    @Override
+    public void exitIfElseStmt(javaMinusMinus2Parser.IfElseStmtContext ctx) {
+        popScope();
+    }
+
     @Override
     public void enterMainClass(javaMinusMinus2Parser.MainClassContext ctx) {
         String className = ctx.Identifier(0).getText();
-        addClassSymbol(className, false, null, null);
+        
+        if (currentScope.lookupCurrentScopeOnly(className) == null) {
+            SymbolInfo classInfo = new SymbolInfo(className, SymbolInfo.SymbolType.CLASS);
+            classInfo.dataType = "class";
+            currentScope.insert(classInfo);
+        }
+        
         SymbolTable classScope = new SymbolTable(SymbolTable.ScopeType.CLASS, className, currentScope);
         pushScope(classScope);
 
@@ -79,17 +135,17 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
     @Override
     public void exitMainClass(javaMinusMinus2Parser.MainClassContext ctx) {
         popScope();
-        popScope();
+        popScope(); 
     }
 
-    // ======================== classDecl ========================
     @Override
     public void enterClassDecl(javaMinusMinus2Parser.ClassDeclContext ctx) {
-        // اطمینان از اینکه این Rule واقعاً یک کلاس است
+        if (ctx.getChildCount() < 2) return;
+        
         String firstChild = ctx.getChild(0).getText();
         if (!firstChild.equals("class") && !firstChild.equals("abstract"))
             return;
-        if (firstChild.equals("abstract") && !ctx.getChild(1).getText().equals("class"))
+        if (firstChild.equals("abstract") && ctx.getChildCount() > 1 && !ctx.getChild(1).getText().equals("class"))
             return;
 
         String className = ctx.Identifier(0).getText();
@@ -98,7 +154,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         String parent = null;
         List<String> interfaces = new ArrayList<>();
 
-        // جستجو برای "extends" و "implements" در فرزندان
         for (int i = 0; i < ctx.getChildCount(); i++) {
             String text = ctx.getChild(i).getText();
             if (text.equals("extends") && i + 1 < ctx.getChildCount()) {
@@ -122,10 +177,13 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
     @Override
     public void exitClassDecl(javaMinusMinus2Parser.ClassDeclContext ctx) {
-        popScope();
+        popScope(); 
     }
 
     private void addClassSymbol(String name, boolean isAbstract, String parent, List<String> interfaces) {
+        if (currentScope.lookupCurrentScopeOnly(name) != null) {
+            return;
+        }
         SymbolInfo info = new SymbolInfo(name, SymbolInfo.SymbolType.CLASS);
         info.dataType = "class";
         info.isAbstract = isAbstract;
@@ -135,13 +193,16 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         currentScope.insert(info);
     }
 
-    // ======================== interface ========================
     @Override
     public void enterInterfaceDecl(javaMinusMinus2Parser.InterfaceDeclContext ctx) {
         String interfaceName = ctx.Identifier().getText();
-        SymbolInfo info = new SymbolInfo(interfaceName, SymbolInfo.SymbolType.INTERFACE);
-        info.dataType = "interface";
-        currentScope.insert(info);
+        
+        if (currentScope.lookupCurrentScopeOnly(interfaceName) == null) {
+            SymbolInfo info = new SymbolInfo(interfaceName, SymbolInfo.SymbolType.INTERFACE);
+            info.dataType = "interface";
+            currentScope.insert(info);
+        }
+        
         SymbolTable interfaceScope = new SymbolTable(SymbolTable.ScopeType.INTERFACE, interfaceName, currentScope);
         pushScope(interfaceScope);
     }
@@ -156,20 +217,24 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         String fieldType = ctx.type().getText();
         String fieldName = ctx.Identifier().getText();
         String initValue = ctx.expression().getText();
-        SymbolInfo field = new SymbolInfo(fieldName, SymbolInfo.SymbolType.FIELD);
-        field.dataType = fieldType;
-        field.accessModifier = SymbolInfo.AccessModifier.PUBLIC;
-        field.isStatic = true;
-        field.isFinal = true;
-        field.initialValue = initValue;
-        field.scopeLevel = "interface";
-        currentScope.insert(field);
+        
+        if (currentScope.lookupCurrentScopeOnly(fieldName) == null) {
+            SymbolInfo field = new SymbolInfo(fieldName, SymbolInfo.SymbolType.FIELD);
+            field.dataType = fieldType;
+            field.accessModifier = SymbolInfo.AccessModifier.PUBLIC;
+            field.isStatic = true;
+            field.isFinal = true;
+            field.initialValue = initValue;
+            field.scopeLevel = "interface";
+            currentScope.insert(field);
+        }
     }
 
     @Override
     public void enterInterfaceMethodDecl(javaMinusMinus2Parser.InterfaceMethodDeclContext ctx) {
         String methodName = ctx.Identifier().getText();
         String returnType = (ctx.type() != null) ? ctx.type().getText() : "void";
+        
         SymbolInfo method = new SymbolInfo(methodName, SymbolInfo.SymbolType.METHOD);
         method.dataType = returnType;
         method.accessModifier = SymbolInfo.AccessModifier.PUBLIC;
@@ -183,7 +248,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         currentScope.insert(method);
     }
 
-    // ======================== method ========================
     @Override
     public void enterMethodDecl(javaMinusMinus2Parser.MethodDeclContext ctx) {
         String methodName = ctx.Identifier().getText();
@@ -209,10 +273,12 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         pushScope(methodScope);
 
         for (SymbolInfo.ParameterInfo p : method.parameters) {
-            SymbolInfo paramSym = new SymbolInfo(p.name, SymbolInfo.SymbolType.PARAMETER);
-            paramSym.dataType = p.type;
-            paramSym.scopeLevel = "method";
-            currentScope.insert(paramSym);
+            if (currentScope.lookupCurrentScopeOnly(p.name) == null) {
+                SymbolInfo paramSym = new SymbolInfo(p.name, SymbolInfo.SymbolType.PARAMETER);
+                paramSym.dataType = p.type;
+                paramSym.scopeLevel = "method";
+                currentScope.insert(paramSym);
+            }
         }
     }
 
@@ -221,7 +287,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         popScope();
     }
 
-    // ======================== abstract method ========================
     @Override
     public void enterAbstractMethodDecl(javaMinusMinus2Parser.AbstractMethodDeclContext ctx) {
         String methodName = ctx.Identifier().getText();
@@ -244,7 +309,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         currentScope.insert(method);
     }
 
-    // ======================== constructor ========================
     @Override
     public void enterCtorDecl(javaMinusMinus2Parser.CtorDeclContext ctx) {
         String ctorName = ctx.Identifier().getText();
@@ -263,10 +327,12 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         pushScope(ctorScope);
 
         for (SymbolInfo.ParameterInfo p : ctor.parameters) {
-            SymbolInfo paramSym = new SymbolInfo(p.name, SymbolInfo.SymbolType.PARAMETER);
-            paramSym.dataType = p.type;
-            paramSym.scopeLevel = "constructor";
-            currentScope.insert(paramSym);
+            if (currentScope.lookupCurrentScopeOnly(p.name) == null) {
+                SymbolInfo paramSym = new SymbolInfo(p.name, SymbolInfo.SymbolType.PARAMETER);
+                paramSym.dataType = p.type;
+                paramSym.scopeLevel = "constructor";
+                currentScope.insert(paramSym);
+            }
         }
     }
 
@@ -275,22 +341,23 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         popScope();
     }
 
-    // ======================== field ========================
     @Override
     public void enterFieldDecl(javaMinusMinus2Parser.FieldDeclContext ctx) {
         if (ctx.varDecl() != null) {
             String fieldType = ctx.varDecl().type().getText();
             String fieldName = ctx.varDecl().Identifier().getText();
             SymbolInfo.AccessModifier access = getAccessModifier(ctx.varDecl().accessModifier());
-            SymbolInfo field = new SymbolInfo(fieldName, SymbolInfo.SymbolType.FIELD);
-            field.dataType = fieldType;
-            field.accessModifier = access;
-            field.scopeLevel = "class";
-            currentScope.insert(field);
+            
+            if (currentScope.lookupCurrentScopeOnly(fieldName) == null) {
+                SymbolInfo field = new SymbolInfo(fieldName, SymbolInfo.SymbolType.FIELD);
+                field.dataType = fieldType;
+                field.accessModifier = access;
+                field.scopeLevel = "class";
+                currentScope.insert(field);
+            }
         }
     }
 
-    // ======================== local variables ========================
     @Override
     public void enterLocalDeclStmt(javaMinusMinus2Parser.LocalDeclStmtContext ctx) {
         addLocalVariable(ctx.localDecl());
@@ -301,25 +368,32 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         String varType = ctx.type().getText();
         String varName = ctx.Identifier().getText();
         String initValue = (ctx.expression() != null) ? ctx.expression().getText() : null;
-        SymbolInfo varInfo = new SymbolInfo(varName, SymbolInfo.SymbolType.VARIABLE);
-        varInfo.dataType = varType;
-        varInfo.scopeLevel = currentScope.getScopeType().toString();
-        varInfo.initialValue = initValue;
-        currentScope.insert(varInfo);
+        
+        if (currentScope.lookupCurrentScopeOnly(varName) == null) {
+            SymbolInfo varInfo = new SymbolInfo(varName, SymbolInfo.SymbolType.VARIABLE);
+            varInfo.dataType = varType;
+            varInfo.scopeLevel = currentScope.getScopeType().toString();
+            varInfo.initialValue = initValue;
+            currentScope.insert(varInfo);
+        }
     }
 
     private void addLocalVariable(javaMinusMinus2Parser.LocalDeclContext localCtx) {
+        if (localCtx == null) return;
+        
         String varType = localCtx.type().getText();
         String varName = localCtx.Identifier().getText();
         String initValue = (localCtx.expression() != null) ? localCtx.expression().getText() : null;
-        SymbolInfo varInfo = new SymbolInfo(varName, SymbolInfo.SymbolType.VARIABLE);
-        varInfo.dataType = varType;
-        varInfo.scopeLevel = currentScope.getScopeType().toString();
-        varInfo.initialValue = initValue;
-        currentScope.insert(varInfo);
+        
+        if (currentScope.lookupCurrentScopeOnly(varName) == null) {
+            SymbolInfo varInfo = new SymbolInfo(varName, SymbolInfo.SymbolType.VARIABLE);
+            varInfo.dataType = varType;
+            varInfo.scopeLevel = currentScope.getScopeType().toString();
+            varInfo.initialValue = initValue;
+            currentScope.insert(varInfo);
+        }
     }
 
-    // ======================== block ========================
     @Override
     public void enterBlockStmt(javaMinusMinus2Parser.BlockStmtContext ctx) {
         SymbolTable blockScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "block", currentScope);

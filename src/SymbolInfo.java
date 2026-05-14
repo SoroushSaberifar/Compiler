@@ -2,7 +2,7 @@ import java.util.*;
 
 public class SymbolInfo {
     public enum SymbolType {
-        CLASS, INTERFACE, METHOD, CONSTRUCTOR, VARIABLE, FIELD, PARAMETER
+    CLASS, INTERFACE, METHOD, CONSTRUCTOR, VARIABLE, FIELD, PARAMETER, IMPORT
     }
 
     public enum AccessModifier {
