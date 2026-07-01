@@ -30,6 +30,7 @@ public class SymbolInfo {
     public AccessModifier accessModifier;
 
     public String parentClass;
+    public SymbolInfo parentClassInfo;  
     public List<String> implementedInterfaces;
     public boolean isAbstract;
 
@@ -40,6 +41,9 @@ public class SymbolInfo {
 
     public String scopeLevel;
     public String initialValue;
+    
+    public boolean isArray;             
+    public int arraySize;             
 
     public int lineNumber;
     public int columnNumber;
@@ -59,6 +63,9 @@ public class SymbolInfo {
         this.scopeLevel = "unknown";
         this.initialValue = null;
         this.parentClass = null;
+        this.parentClassInfo = null;    
+        this.isArray = false;           
+        this.arraySize = -1;         
         this.lineNumber = -1;
         this.columnNumber = -1;
         this.overloads = null;
@@ -121,6 +128,9 @@ public class SymbolInfo {
         if (dataType != null && !dataType.isEmpty() && symbolType != SymbolType.CLASS
                 && symbolType != SymbolType.INTERFACE) {
             sb.append(" : ").append(dataType);
+            if (isArray) {
+                sb.append("[] (Size: ").append(arraySize).append(")");
+            }
         }
         if (accessModifier != AccessModifier.DEFAULT) {
             sb.append(" [").append(accessModifier.toString().toLowerCase()).append("]");
@@ -192,12 +202,19 @@ public class SymbolInfo {
         StringBuilder sb = new StringBuilder();
         sb.append("=== Symbol: ").append(name).append(" ===\n");
         sb.append("  Type: ").append(symbolType).append("\n");
-        if (dataType != null)
-            sb.append("  Data Type: ").append(dataType).append("\n");
+        if (dataType != null) {
+            sb.append("  Data Type: ").append(dataType);
+            if (isArray) {
+                sb.append("[] (Array Size: ").append(arraySize).append(")");
+            }
+            sb.append("\n");
+        }
         if (accessModifier != AccessModifier.DEFAULT)
             sb.append("  Access: ").append(accessModifier).append("\n");
         if (parentClass != null)
             sb.append("  Parent Class: ").append(parentClass).append("\n");
+        if (parentClassInfo != null)
+            sb.append("  Parent Class Info Resolved: ").append(parentClassInfo.name).append("\n");
         if (!implementedInterfaces.isEmpty())
             sb.append("  Implements: ").append(implementedInterfaces).append("\n");
         if (isAbstract)

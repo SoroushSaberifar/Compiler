@@ -46,7 +46,11 @@ public class SymbolTable {
     }
 
     public List<String> getSemanticErrors() {
-        return semanticErrors;
+        List<String> allErrors = new ArrayList<>(this.semanticErrors);
+        for (SymbolTable child : childScopes) {
+            allErrors.addAll(child.getSemanticErrors());
+        }
+        return allErrors;
     }
 
     public void insert(SymbolInfo info) {
@@ -76,19 +80,19 @@ public class SymbolTable {
                     existing.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
 
                 if (existing.sameSignature(info)) {
-                    addSemanticError("Duplicate method/constructor: " + info.name + info.getParameterString());
+                    addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + " - Duplicate method/constructor: " + info.name + info.getParameterString());
                     return;
                 }
                 existing.addOverload(info);
                 return;
             } else {
-                addSemanticError("Name conflict: " + info.name + " cannot be declared as " + info.symbolType +
+                addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + " - Name conflict: " + info.name + " cannot be declared as " + info.symbolType +
                         " because a " + existing.symbolType + " with the same name exists");
                 return;
             }
         }
 
-        addSemanticError("Redeclaration of '" + name + "' as " + info.symbolType +
+        addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + " - Redeclaration of '" + name + "' as " + info.symbolType +
                 " (previous: " + existing.symbolType + ")");
     }
 
@@ -203,6 +207,37 @@ public class SymbolTable {
 
     public SymbolTable getCurrentMethodScope() {
         return getEnclosingScope(ScopeType.METHOD);
+    }
+    public void checkInheritanceCycle() {
+        if (this.scopeType != ScopeType.GLOBAL) {
+            getRootScope().checkInheritanceCycle();
+            return;
+        }
+
+        for (SymbolInfo sym : symbols.values()) {
+            if (sym.symbolType == SymbolInfo.SymbolType.CLASS && sym.parentClass != null) {
+                Set<String> visited = new HashSet<>();
+                SymbolInfo currentClass = sym;
+
+                while (currentClass != null && currentClass.parentClass != null) {
+                    visited.add(currentClass.name);
+                    String parentName = currentClass.parentClass;
+
+                    if (visited.contains(parentName)) {
+                        addSemanticError("Line " + sym.lineNumber + ":" + sym.columnNumber + " - Inheritance cycle detected involving class '" + sym.name + "'.");
+                        break;
+                    }
+
+                    SymbolInfo parentInfo = lookupCurrentScopeOnly(parentName);
+                    if (parentInfo != null && parentInfo.symbolType == SymbolInfo.SymbolType.CLASS) {
+                        currentClass.parentClassInfo = parentInfo;
+                        currentClass = parentInfo;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     public void printTree(int indent) {
