@@ -14,7 +14,7 @@ public class SymbolTable {
     private static int nextScopeId = 0;
 
     private List<String> semanticErrors;
-    private boolean errorReportingEnabled; 
+    private boolean errorReportingEnabled;
 
     public SymbolTable(ScopeType type, String name, SymbolTable parent) {
         this.symbols = new LinkedHashMap<>();
@@ -46,11 +46,7 @@ public class SymbolTable {
     }
 
     public List<String> getSemanticErrors() {
-        List<String> allErrors = new ArrayList<>(this.semanticErrors);
-        for (SymbolTable child : childScopes) {
-            allErrors.addAll(child.getSemanticErrors());
-        }
-        return allErrors;
+        return semanticErrors;
     }
 
     public void insert(SymbolInfo info) {
@@ -64,7 +60,7 @@ public class SymbolTable {
 
         if (!errorReportingEnabled) {
             if (info.symbolType == SymbolInfo.SymbolType.METHOD ||
-                info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
+                    info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
                 String uniqueName = name + "_" + info.getParameterString();
                 symbols.put(uniqueName, info);
             } else {
@@ -80,19 +76,19 @@ public class SymbolTable {
                     existing.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
 
                 if (existing.sameSignature(info)) {
-                    addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + " - Duplicate method/constructor: " + info.name + info.getParameterString());
+                    addSemanticError("Duplicate method/constructor: " + info.name + info.getParameterString());
                     return;
                 }
                 existing.addOverload(info);
                 return;
             } else {
-                addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + " - Name conflict: " + info.name + " cannot be declared as " + info.symbolType +
+                addSemanticError("Name conflict: " + info.name + " cannot be declared as " + info.symbolType +
                         " because a " + existing.symbolType + " with the same name exists");
                 return;
             }
         }
 
-        addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + " - Redeclaration of '" + name + "' as " + info.symbolType +
+        addSemanticError("Redeclaration of '" + name + "' as " + info.symbolType +
                 " (previous: " + existing.symbolType + ")");
     }
 
@@ -106,8 +102,8 @@ public class SymbolTable {
     public void insertForce(SymbolInfo info) {
         String key = info.name;
         if (info.symbolType == SymbolInfo.SymbolType.METHOD ||
-            info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
-            key = info.name + info.getParameterString();
+                info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
+            key = info.name + "_" + info.getParameterString();
         }
         symbols.put(key, info);
     }
@@ -115,13 +111,14 @@ public class SymbolTable {
     public SymbolInfo lookup(String name) {
         if (symbols.containsKey(name))
             return symbols.get(name);
-        
+
+        // اصلاح بخش اورلودها متناسب با کلید نام متد
         for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
-            if (entry.getKey().startsWith(name + "(")) {
+            if (entry.getKey().startsWith(name + "_") || entry.getKey().equals(name)) {
                 return entry.getValue();
             }
         }
-        
+
         if (parentScope != null)
             return parentScope.lookup(name);
         return null;
@@ -130,9 +127,9 @@ public class SymbolTable {
     public SymbolInfo lookupCurrentScopeOnly(String name) {
         if (symbols.containsKey(name))
             return symbols.get(name);
-        
+
         for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
-            if (entry.getKey().startsWith(name + "(")) {
+            if (entry.getKey().startsWith(name + "_") || entry.getKey().equals(name)) {
                 return entry.getValue();
             }
         }
@@ -207,37 +204,6 @@ public class SymbolTable {
 
     public SymbolTable getCurrentMethodScope() {
         return getEnclosingScope(ScopeType.METHOD);
-    }
-    public void checkInheritanceCycle() {
-        if (this.scopeType != ScopeType.GLOBAL) {
-            getRootScope().checkInheritanceCycle();
-            return;
-        }
-
-        for (SymbolInfo sym : symbols.values()) {
-            if (sym.symbolType == SymbolInfo.SymbolType.CLASS && sym.parentClass != null) {
-                Set<String> visited = new HashSet<>();
-                SymbolInfo currentClass = sym;
-
-                while (currentClass != null && currentClass.parentClass != null) {
-                    visited.add(currentClass.name);
-                    String parentName = currentClass.parentClass;
-
-                    if (visited.contains(parentName)) {
-                        addSemanticError("Line " + sym.lineNumber + ":" + sym.columnNumber + " - Inheritance cycle detected involving class '" + sym.name + "'.");
-                        break;
-                    }
-
-                    SymbolInfo parentInfo = lookupCurrentScopeOnly(parentName);
-                    if (parentInfo != null && parentInfo.symbolType == SymbolInfo.SymbolType.CLASS) {
-                        currentClass.parentClassInfo = parentInfo;
-                        currentClass = parentInfo;
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
     }
 
     public void printTree(int indent) {
