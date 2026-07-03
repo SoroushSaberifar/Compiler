@@ -1,0 +1,46 @@
+import std.io;
+
+class Calculator {
+    int result;
+
+    int add(int a, int b) {
+        int sum;
+        sum = a + b;
+        return sum;
+    }
+
+    int multiply(int a, int b) {
+        int temp;
+        temp = 0;
+        int i;
+        i = 0;
+        while (i < b) {
+            temp = temp + a;
+            i = i + 1;
+        }
+        return temp;
+    }
+}
+
+class MainProgram {
+    void main() {
+        Calculator calc;
+        calc = new Calculator();
+        
+        int x;
+        int y;
+        x = 5;
+        y = 10;
+        
+        int r;
+        r = calc.add(x, y);
+        
+        if (r > 10) {
+            int doubleResult;
+            doubleResult = calc.multiply(r, 2);
+        } else {
+            int zero;
+            zero = 0;
+        }
+    }
+}

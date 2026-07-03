@@ -1,4 +1,6 @@
 import grammar.javaMinusMinus2Parser;
+import java.util.*;
+import org.antlr.v4.runtime.ParserRuleContext;
 
 public class TypeChecker {
 
@@ -6,10 +8,8 @@ public class TypeChecker {
         if (ctx == null)
             return "unknown";
 
-        // ابتدا نوع عملوند سمت چپ را به دست می‌آوریم
         String leftType = getPrimaryExpressionType(ctx.primaryExpression(), currentScope);
 
-        // اگر بخش دوم عبارت (Tail/Prime) خالی باشد، نوع عبارت همان نوع سمت چپ است
         if (ctx.expressionPrime() == null || ctx.expressionPrime().getText().isEmpty()) {
             return leftType;
         }
@@ -19,63 +19,59 @@ public class TypeChecker {
 
     private String getExpressionPrimeType(javaMinusMinus2Parser.ExpressionPrimeContext ctx, String leftType,
             SymbolTable currentScope) {
-        if (ctx == null)
+        if (ctx == null || ctx.getText().isEmpty())
             return leftType;
 
         if (ctx instanceof javaMinusMinus2Parser.ArrayAccessExprContext) {
             javaMinusMinus2Parser.ArrayAccessExprContext arrayCtx = (javaMinusMinus2Parser.ArrayAccessExprContext) ctx;
             javaMinusMinus2Parser.ExpressionContext indexCtx = arrayCtx.expression();
-            String indexType = getExpressionType(indexCtx, currentScope);
 
+            String indexType = getExpressionType(indexCtx, currentScope);
             if (!indexType.equals("int")) {
                 currentScope.addSemanticError(String.format(
                         "Line %d:%d - Array index must be an integer, found: %s",
                         ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), indexType));
+            } else {
+
+                checkArrayBounds(indexCtx, currentScope);
             }
 
-            checkArrayBounds(indexCtx, leftType, currentScope);
-
+            String resultType = "unknown";
             if (leftType.endsWith("[]")) {
-                String resultType = leftType.substring(0, leftType.length() - 2);
-                // فراخوانی متد روی گره فرزندِ واقعی موجود در این ساب‌کلاس
-                return getExpressionPrimeType(arrayCtx.expressionPrime(), resultType, currentScope);
+                resultType = leftType.substring(0, leftType.length() - 2);
+            } else if (!leftType.equals("unknown")) {
+                currentScope.addSemanticError(String.format(
+                        "Line %d:%d - Subscript operator [ ] cannot be applied to non-array type: %s",
+                        ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), leftType));
             }
-            return "unknown";
+
+            return getExpressionPrimeType(arrayCtx.expressionPrime(), resultType, currentScope);
         }
 
         if (ctx instanceof javaMinusMinus2Parser.ArrayLengthExprContext) {
-            if (!leftType.endsWith("[]")) {
+            javaMinusMinus2Parser.ArrayLengthExprContext lenCtx = (javaMinusMinus2Parser.ArrayLengthExprContext) ctx;
+            if (!leftType.endsWith("[]") && !leftType.equals("unknown")) {
                 currentScope.addSemanticError(String.format(
-                        "Line %d:%d - .length can only be applied to arrays",
-                        ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine()));
-            }
-            return "int";
-        }
-
-        // عملیات‌های ریاضی
-        if (ctx instanceof javaMinusMinus2Parser.AddExprContext || ctx instanceof javaMinusMinus2Parser.SubExprContext
-                || ctx instanceof javaMinusMinus2Parser.MulExprContext
-                || ctx instanceof javaMinusMinus2Parser.DivExprContext
-                || ctx instanceof javaMinusMinus2Parser.ModExprContext
-                || ctx instanceof javaMinusMinus2Parser.PowExprContext) {
-
-            if (!leftType.equals("int")) {
-                currentScope.addSemanticError(String.format(
-                        "Line %d:%d - Operator cannot be applied to type: %s",
+                        "Line %d:%d - Length property is only applicable to arrays, found in: %s",
                         ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), leftType));
             }
-            return "int";
+            return getExpressionPrimeType(lenCtx.expressionPrime(), "int", currentScope);
         }
 
-        // عملیات‌های مقایسه‌ای و منطقی
-        if (ctx instanceof javaMinusMinus2Parser.LtExprContext || ctx instanceof javaMinusMinus2Parser.LeExprContext ||
-                ctx instanceof javaMinusMinus2Parser.GtExprContext || ctx instanceof javaMinusMinus2Parser.GeExprContext
-                ||
-                ctx instanceof javaMinusMinus2Parser.EqExprContext
-                || ctx instanceof javaMinusMinus2Parser.NeqExprContext ||
-                ctx instanceof javaMinusMinus2Parser.AndExprContext
-                || ctx instanceof javaMinusMinus2Parser.OrExprContext) {
-            return "boolean";
+        if (ctx instanceof javaMinusMinus2Parser.MethodCallExprContext) {
+            javaMinusMinus2Parser.MethodCallExprContext callCtx = (javaMinusMinus2Parser.MethodCallExprContext) ctx;
+            String methodName = callCtx.Identifier().getText();
+
+            List<String> actualArgTypes = new ArrayList<>();
+            if (callCtx.expression() != null) {
+                for (javaMinusMinus2Parser.ExpressionContext expr : callCtx.expression()) {
+                    actualArgTypes.add(getExpressionType(expr, currentScope));
+                }
+            }
+
+            String returnType = resolveMethodCall(leftType, methodName, actualArgTypes, callCtx, currentScope);
+
+            return getExpressionPrimeType(callCtx.expressionPrime(), returnType, currentScope);
         }
 
         return leftType;
@@ -106,6 +102,10 @@ public class TypeChecker {
             String name = ctx.getText();
             SymbolInfo sym = currentScope.lookup(name);
             if (sym != null) {
+
+                if (sym.symbolType == SymbolInfo.SymbolType.VARIABLE && !sym.isInitialized) {
+
+                }
                 return sym.dataType;
             }
             currentScope.addSemanticError(String.format(
@@ -118,12 +118,11 @@ public class TypeChecker {
             javaMinusMinus2Parser.NewArrayExprContext newArrCtx = (javaMinusMinus2Parser.NewArrayExprContext) ctx;
             String baseType = newArrCtx.type().getText();
 
-            // بررسی اینکه اندیس سایز آرایه int باشد
             String sizeType = getExpressionType(newArrCtx.expression(), currentScope);
             if (!sizeType.equals("int")) {
                 currentScope.addSemanticError(String.format(
-                        "Line %d:%d - Array allocation size must be an integer",
-                        ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine()));
+                        "Line %d:%d - Array allocation size must be an integer, found: %s",
+                        ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), sizeType));
             }
             return baseType + "[]";
         }
@@ -135,12 +134,111 @@ public class TypeChecker {
         return "unknown";
     }
 
-    private void checkArrayBounds(javaMinusMinus2Parser.ExpressionContext indexCtx, String leftType,
-            SymbolTable currentScope) {
+    private String resolveMethodCall(String targetType, String methodName, List<String> actualArgTypes,
+            ParserRuleContext ctx, SymbolTable currentScope) {
+
+        if (targetType.equals("unknown")) {
+            return "unknown";
+        }
+
+        SymbolTable classScope = null;
+
+        if (targetType.equals("this") || (currentScope.getCurrentClassScope() != null
+                && targetType.equals(currentScope.getCurrentClassScope().getScopeName()))) {
+            classScope = currentScope.getCurrentClassScope();
+        } else {
+
+            SymbolInfo targetClassInfo = currentScope.lookup(targetType);
+            if (targetClassInfo != null && targetClassInfo.symbolType == SymbolInfo.SymbolType.CLASS) {
+                classScope = currentScope.findClassScope(targetType);
+            } else {
+
+                SymbolInfo globalImport = currentScope.lookup(targetType);
+                if (globalImport != null && globalImport.symbolType == SymbolInfo.SymbolType.IMPORT) {
+                    return "unknown";
+                }
+            }
+        }
+
+        if (classScope == null) {
+            currentScope.addSemanticError(String.format(
+                    "Line %d:%d - Cannot resolve class type for object: %s",
+                    ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), targetType));
+            return "unknown";
+        }
+
+        SymbolTable currentSearchScope = classScope;
+        while (currentSearchScope != null) {
+            List<SymbolInfo> overloads = currentSearchScope.lookupMethodOverloads(methodName);
+            if (!overloads.isEmpty()) {
+                for (SymbolInfo method : overloads) {
+                    if (method.parameters.size() == actualArgTypes.size()) {
+                        boolean match = true;
+                        for (int i = 0; i < actualArgTypes.size(); i++) {
+                            String paramType = method.parameters.get(i).type;
+                            String argType = actualArgTypes.get(i);
+                            if (!isTypeCompatible(paramType, argType, currentScope)) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (match) {
+                            return method.dataType;
+                        }
+                    }
+                }
+            }
+
+            SymbolInfo classInfo = currentScope.lookup(currentSearchScope.getScopeName());
+            if (classInfo != null && classInfo.parentClass != null) {
+                currentSearchScope = currentScope.findClassScope(classInfo.parentClass);
+            } else {
+                currentSearchScope = null;
+            }
+        }
+
+        currentScope.addSemanticError(String.format(
+                "Line %d:%d - No method '%s' in class '%s' matches the arguments: %s",
+                ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), methodName, classScope.getScopeName(),
+                actualArgTypes));
+        return "unknown";
+    }
+
+    public boolean isTypeCompatible(String expected, String actual, SymbolTable currentScope) {
+        if (expected.equals(actual))
+            return true;
+
+        if (actual.equals("null")) {
+            return !expected.equals("int") && !expected.equals("boolean") && !expected.equals("char");
+        }
+
+        SymbolInfo actualClass = currentScope.lookup(actual);
+        if (actualClass != null && actualClass.symbolType == SymbolInfo.SymbolType.CLASS) {
+            String parent = actualClass.parentClass;
+
+            Set<String> visited = new HashSet<>();
+            visited.add(actual);
+            while (parent != null) {
+                if (visited.contains(parent)) {
+
+                    return false;
+                }
+                if (parent.equals(expected)) {
+                    return true;
+                }
+                visited.add(parent);
+                SymbolInfo parentClass = currentScope.lookup(parent);
+                parent = (parentClass != null) ? parentClass.parentClass : null;
+            }
+        }
+
+        return false;
+    }
+
+    private void checkArrayBounds(javaMinusMinus2Parser.ExpressionContext indexCtx, SymbolTable currentScope) {
         if (indexCtx == null)
             return;
 
-        // اگر اندیس یک عدد ثابت مستقیم بود
         if (indexCtx.primaryExpression() instanceof javaMinusMinus2Parser.IntLitExprContext) {
             try {
                 int indexVal = Integer.parseInt(indexCtx.primaryExpression().getText().trim());
@@ -149,9 +247,6 @@ public class TypeChecker {
                             "Line %d:%d - Array index cannot be negative: %d",
                             indexCtx.getStart().getLine(), indexCtx.getStart().getCharPositionInLine(), indexVal));
                 }
-                // نکته: بررسی سقف آرایه (بزرگتر از سایز) را در فاز انتساب یا درخت‌پیمای اصلی
-                // انجام خواهیم داد،
-                // زیرا در این گره، نام فیلد آرایه را مستقیماً نداریم (فقط نوع داده را داریم).
             } catch (NumberFormatException ignored) {
             }
         }

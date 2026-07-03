@@ -78,29 +78,15 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         }
     }
 
-    // حذف اسکوپ‌های موازی برای جلوگیری از تداخل با enterBlockStmt
     @Override
     public void enterForStmt(javaMinusMinus2Parser.ForStmtContext ctx) {
+        SymbolTable forScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "for", currentScope);
+        pushScope(forScope);
     }
 
     @Override
     public void exitForStmt(javaMinusMinus2Parser.ForStmtContext ctx) {
-    }
-
-    @Override
-    public void enterWhileStmt(javaMinusMinus2Parser.WhileStmtContext ctx) {
-    }
-
-    @Override
-    public void exitWhileStmt(javaMinusMinus2Parser.WhileStmtContext ctx) {
-    }
-
-    @Override
-    public void enterIfElseStmt(javaMinusMinus2Parser.IfElseStmtContext ctx) {
-    }
-
-    @Override
-    public void exitIfElseStmt(javaMinusMinus2Parser.IfElseStmtContext ctx) {
+        popScope();
     }
 
     @Override
@@ -141,6 +127,7 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
             SymbolInfo paramSym = new SymbolInfo(p.name, SymbolInfo.SymbolType.PARAMETER);
             paramSym.dataType = p.type;
             paramSym.scopeLevel = "method";
+            paramSym.isInitialized = true;
             setLocationInfo(paramSym, ctx);
             currentScope.insert(paramSym);
         }
@@ -221,7 +208,8 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
     public void exitClassDecl(javaMinusMinus2Parser.ClassDeclContext ctx) {
         if (ctx.Identifier() != null && !ctx.Identifier().isEmpty()) {
             String className = ctx.Identifier(0).getText();
-            if (currentScope.getScopeName().equals(className)) {
+            if (currentScope.getScopeType() == SymbolTable.ScopeType.CLASS
+                    && currentScope.getScopeName().equals(className)) {
                 popScope();
             }
         }
@@ -263,6 +251,7 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
             field.isFinal = true;
             field.initialValue = initValue;
             field.scopeLevel = "interface";
+            field.isInitialized = (initValue != null);
             setLocationInfo(field, ctx);
             currentScope.insert(field);
         }
@@ -342,13 +331,19 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         SymbolTable methodScope = new SymbolTable(SymbolTable.ScopeType.METHOD, methodName, currentScope);
         pushScope(methodScope);
 
-        for (SymbolInfo.ParameterInfo p : method.parameters) {
-            if (currentScope.lookupCurrentScopeOnly(p.name) == null) {
-                SymbolInfo paramSym = new SymbolInfo(p.name, SymbolInfo.SymbolType.PARAMETER);
-                paramSym.dataType = p.type;
-                paramSym.scopeLevel = "method";
-                setLocationInfo(paramSym, ctx);
-                currentScope.insert(paramSym);
+        if (ctx.parameterList() != null) {
+            for (grammar.javaMinusMinus2Parser.ParameterContext param : ctx.parameterList().parameter()) {
+                if (param.Identifier() != null && param.type() != null) {
+                    String pName = param.Identifier().getText();
+                    if (currentScope.lookupCurrentScopeOnly(pName) == null) {
+                        SymbolInfo paramSym = new SymbolInfo(pName, SymbolInfo.SymbolType.PARAMETER);
+                        paramSym.dataType = param.type().getText();
+                        paramSym.scopeLevel = "method";
+                        paramSym.isInitialized = true;
+                        setLocationInfo(paramSym, param);
+                        currentScope.insert(paramSym);
+                    }
+                }
             }
         }
     }
@@ -425,13 +420,17 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         SymbolTable ctorScope = new SymbolTable(SymbolTable.ScopeType.METHOD, ctorName, currentScope);
         pushScope(ctorScope);
 
-        for (SymbolInfo.ParameterInfo p : ctor.parameters) {
-            if (currentScope.lookupCurrentScopeOnly(p.name) == null) {
-                SymbolInfo paramSym = new SymbolInfo(p.name, SymbolInfo.SymbolType.PARAMETER);
-                paramSym.dataType = p.type;
-                paramSym.scopeLevel = "constructor";
-                setLocationInfo(paramSym, ctx);
-                currentScope.insert(paramSym);
+        if (ctx.parameterList() != null) {
+            for (javaMinusMinus2Parser.ParameterContext param : ctx.parameterList().parameter()) {
+                String pName = param.Identifier().getText();
+                if (currentScope.lookupCurrentScopeOnly(pName) == null) {
+                    SymbolInfo paramSym = new SymbolInfo(pName, SymbolInfo.SymbolType.PARAMETER);
+                    paramSym.dataType = param.type().getText();
+                    paramSym.scopeLevel = "constructor";
+                    paramSym.isInitialized = true;
+                    setLocationInfo(paramSym, param);
+                    currentScope.insert(paramSym);
+                }
             }
         }
     }
@@ -453,7 +452,8 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
                 field.dataType = fieldType;
                 field.accessModifier = access;
                 field.scopeLevel = "class";
-                setLocationInfo(field, ctx);
+                field.isInitialized = false;
+                setLocationInfo(field, ctx.varDecl());
                 currentScope.insert(field);
             }
         }
@@ -469,7 +469,11 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
                 SymbolInfo varInfo = new SymbolInfo(varName, SymbolInfo.SymbolType.VARIABLE);
                 varInfo.dataType = varType;
                 varInfo.scopeLevel = "local";
-                setLocationInfo(varInfo, ctx); // رفع مشکل فراموشی تنظیم لوکیشن خط خطا
+
+                boolean hasInitializer = ctx.localDecl().EQ() != null;
+                varInfo.isInitialized = hasInitializer;
+
+                setLocationInfo(varInfo, ctx.localDecl());
                 currentScope.insert(varInfo);
             }
         }
@@ -486,6 +490,10 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
             SymbolInfo varInfo = new SymbolInfo(varName, SymbolInfo.SymbolType.VARIABLE);
             varInfo.dataType = varType;
             varInfo.scopeLevel = "local";
+
+            boolean hasInitializer = ctx.EQ() != null;
+            varInfo.isInitialized = hasInitializer;
+
             setLocationInfo(varInfo, ctx);
             currentScope.insert(varInfo);
         }
@@ -493,12 +501,23 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
     @Override
     public void enterBlockStmt(javaMinusMinus2Parser.BlockStmtContext ctx) {
+
+        RuleContext parent = ctx.getParent();
+        if (parent instanceof javaMinusMinus2Parser.MethodBodyContext) {
+
+            return;
+        }
+
         SymbolTable blockScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "block", currentScope);
         pushScope(blockScope);
     }
 
     @Override
     public void exitBlockStmt(javaMinusMinus2Parser.BlockStmtContext ctx) {
+        RuleContext parent = ctx.getParent();
+        if (parent instanceof javaMinusMinus2Parser.MethodBodyContext) {
+            return;
+        }
         popScope();
     }
 }

@@ -48,6 +48,8 @@ public class SymbolInfo {
 
     public List<SymbolInfo> overloads;
 
+    public boolean isInitialized = false;
+
     public SymbolInfo(String name, SymbolType type) {
         this.name = name;
         this.symbolType = type;
@@ -77,7 +79,6 @@ public class SymbolInfo {
     }
 
     public boolean sameSignature(SymbolInfo other) {
-        // علاوه بر نوع و پارامتر، نام متد/سازنده هم باید یکسان باشد
         if (!this.name.equals(other.name))
             return false;
         if (this.symbolType != other.symbolType)
@@ -131,15 +132,22 @@ public class SymbolInfo {
 
     @Override
     public String toString() {
+        return toStringInternal(false);
+    }
+
+    private String toStringInternal(boolean shallow) {
         StringBuilder sb = new StringBuilder();
         sb.append(symbolType).append(": ").append(name);
-        if (dataType != null && !dataType.isEmpty() && symbolType != SymbolType.CLASS
-                && symbolType != SymbolType.INTERFACE) {
+
+        if (dataType != null && !dataType.isEmpty() &&
+                symbolType != SymbolType.CLASS && symbolType != SymbolType.INTERFACE) {
             sb.append(" : ").append(dataType);
         }
+
         if (accessModifier != AccessModifier.DEFAULT) {
             sb.append(" [").append(accessModifier.toString().toLowerCase()).append("]");
         }
+
         if (isStatic && (symbolType == SymbolType.METHOD || symbolType == SymbolType.FIELD)) {
             sb.append(" static");
         }
@@ -152,6 +160,7 @@ public class SymbolInfo {
         if (isOverride && symbolType == SymbolType.METHOD) {
             sb.append(" @Override");
         }
+
         if (symbolType == SymbolType.CLASS) {
             if (parentClass != null && !parentClass.isEmpty()) {
                 sb.append(" extends ").append(parentClass);
@@ -160,46 +169,26 @@ public class SymbolInfo {
                 sb.append(" implements ").append(String.join(", ", implementedInterfaces));
             }
         }
+
         if (isCallable() && !parameters.isEmpty()) {
             sb.append(getParameterString());
         }
+
         if (initialValue != null && !initialValue.isEmpty() && isDataMember()) {
             sb.append(" = ").append(initialValue);
         }
-        if (scopeLevel != null && scopeLevel.equals("class") && symbolType == SymbolType.FIELD) {
-            sb.append(" [class field]");
-        }
+
         if (lineNumber != -1) {
             sb.append(" (line ").append(lineNumber).append(")");
         }
 
-        if (overloads != null && !overloads.isEmpty()) {
+        if (!shallow && overloads != null && !overloads.isEmpty()) {
             for (SymbolInfo ov : overloads) {
-                sb.append("\n          └─ overload: ").append(ov.toStringWithoutOverloads());
+                sb.append("\n          └─ overload: ")
+                        .append(ov.toStringInternal(true));
             }
         }
-        return sb.toString();
-    }
 
-    private String toStringWithoutOverloads() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(symbolType).append(": ").append(name);
-        if (dataType != null && !dataType.isEmpty() && symbolType != SymbolType.CLASS
-                && symbolType != SymbolType.INTERFACE) {
-            sb.append(" : ").append(dataType);
-        }
-        if (accessModifier != AccessModifier.DEFAULT) {
-            sb.append(" [").append(accessModifier.toString().toLowerCase()).append("]");
-        }
-        if (isStatic && (symbolType == SymbolType.METHOD || symbolType == SymbolType.FIELD)) {
-            sb.append(" static");
-        }
-        if (isAbstract && (symbolType == SymbolType.CLASS || symbolType == SymbolType.METHOD)) {
-            sb.append(" (abstract)");
-        }
-        if (isCallable() && !parameters.isEmpty()) {
-            sb.append(getParameterString());
-        }
         return sb.toString();
     }
 
@@ -238,6 +227,7 @@ public class SymbolInfo {
             sb.append("  Scope Level: ").append(scopeLevel).append("\n");
         if (lineNumber != -1)
             sb.append("  Location: line ").append(lineNumber).append(", column ").append(columnNumber).append("\n");
+        sb.append("  Initialized: ").append(isInitialized ? "yes" : "no").append("\n");
         return sb.toString();
     }
 }

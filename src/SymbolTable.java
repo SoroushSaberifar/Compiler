@@ -40,45 +40,52 @@ public class SymbolTable {
 
     public void addSemanticError(String error) {
         if (errorReportingEnabled) {
-            semanticErrors.add(error);
-            System.err.println("Semantic error: " + error);
 
-            // هدایت خطا به اسکوپ ریشه (Global) برای دسترسی و گزارش‌گیری راحت در کلاس Main
             SymbolTable root = this;
             while (root.parentScope != null) {
                 root = root.parentScope;
             }
-            if (root != this && !root.semanticErrors.contains(error)) {
+
+            if (!root.semanticErrors.contains(error)) {
                 root.semanticErrors.add(error);
+                System.err.println("Semantic error: " + error);
+            }
+
+            if (this != root && !this.semanticErrors.contains(error)) {
+                this.semanticErrors.add(error);
             }
         }
     }
 
     public List<String> getSemanticErrors() {
-        return semanticErrors;
+
+        SymbolTable root = this;
+        while (root.parentScope != null) {
+            root = root.parentScope;
+        }
+        return root.semanticErrors;
     }
 
     public void insert(SymbolInfo info) {
         String name = info.name;
         SymbolInfo existing = symbols.get(name);
 
-        // اگر از قبل وجود نداشته باشد، به راحتی درج می‌شود
         if (existing == null) {
             symbols.put(name, info);
             return;
         }
 
-        // اگر گزارش خطا غیرفعال باشد (پاس‌های پیش‌پردازش اختیاری)
         if (!errorReportingEnabled) {
             if (info.symbolType == SymbolInfo.SymbolType.METHOD ||
                     info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
                 String uniqueName = name + "_" + info.getParameterString();
                 symbols.put(uniqueName, info);
+            } else {
+                symbols.put(name, info);
             }
             return;
         }
 
-        // مدیریت بازنویسی و خطای متدها و سازنده‌ها
         if (info.symbolType == SymbolInfo.SymbolType.METHOD ||
                 info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
 
@@ -91,6 +98,9 @@ public class SymbolTable {
                     return;
                 }
                 existing.addOverload(info);
+
+                String uniqueKey = name + "_" + info.getParameterString();
+                symbols.put(uniqueKey, info);
                 return;
             } else {
                 addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber +
@@ -100,7 +110,14 @@ public class SymbolTable {
             }
         }
 
-        // خطای بازتعریف متغیر، فیلد یا پارامتر در یک اسکوپ واحد (بند اول فاز ۲)
+        if (existing.symbolType == SymbolInfo.SymbolType.METHOD ||
+                existing.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
+            addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber +
+                    " - Name conflict: " + name + " cannot be declared as " + info.symbolType +
+                    " because a method/constructor with the same name exists");
+            return;
+        }
+
         addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber +
                 " - Redeclaration of '" + name + "' as " + info.symbolType +
                 " (previous declaration was " + existing.symbolType + ")");
@@ -123,33 +140,32 @@ public class SymbolTable {
     }
 
     public SymbolInfo lookup(String name) {
-        if (symbols.containsKey(name))
-            return symbols.get(name);
 
-        // اصلاح شرط برای جلوگیری از تطابق اشتباه نام‌های مشابه
+        if (symbols.containsKey(name)) {
+            return symbols.get(name);
+        }
+
         for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
-            if (entry.getKey().equals(name) || entry.getKey().startsWith(name + "._")
-                    || entry.getKey().startsWith(name + "_")) {
-                // یک بررسی دقیق‌تر: مطمئن شویم کاراکتر بعد از نام متد، جداکننده است نه ادامه
-                // نام یک متد دیگر
-                if (entry.getKey().startsWith(name + "_")) {
-                    return entry.getValue();
-                }
+            String key = entry.getKey();
+            if (key.startsWith(name + "_")) {
+                return entry.getValue();
             }
         }
 
-        if (parentScope != null)
+        if (parentScope != null) {
             return parentScope.lookup(name);
+        }
         return null;
     }
 
     public SymbolInfo lookupCurrentScopeOnly(String name) {
-        if (symbols.containsKey(name))
+        if (symbols.containsKey(name)) {
             return symbols.get(name);
+        }
 
-        // اصلاح شرط در اسکوپ فعلی
         for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
-            if (entry.getKey().equals(name) || entry.getKey().startsWith(name + "_")) {
+            String key = entry.getKey();
+            if (key.startsWith(name + "_")) {
                 return entry.getValue();
             }
         }
@@ -161,7 +177,7 @@ public class SymbolTable {
     }
 
     public boolean containsInCurrentScope(String name) {
-        return symbols.containsKey(name);
+        return lookupCurrentScopeOnly(name) != null;
     }
 
     public SymbolTable getParent() {
@@ -184,6 +200,10 @@ public class SymbolTable {
         return scopeId;
     }
 
+    public Map<String, SymbolInfo> getSymbols() {
+        return this.symbols;
+    }
+
     public Map<String, SymbolInfo> getAllSymbols() {
         return Collections.unmodifiableMap(symbols);
     }
@@ -201,11 +221,24 @@ public class SymbolTable {
         return result;
     }
 
+    public SymbolTable findClassScope(String className) {
+
+        SymbolTable root = getRootScope();
+
+        for (SymbolTable child : root.getChildScopes()) {
+            if (child.getScopeType() == ScopeType.CLASS && child.getScopeName().equals(className)) {
+                return child;
+            }
+        }
+        return null;
+    }
+
     public SymbolTable getRootScope() {
-        SymbolTable root = this;
-        while (root.parentScope != null)
-            root = root.parentScope;
-        return root;
+        SymbolTable current = this;
+        while (current.parentScope != null) {
+            current = current.parentScope;
+        }
+        return current;
     }
 
     public SymbolTable getEnclosingScope(ScopeType type) {
@@ -314,16 +347,31 @@ public class SymbolTable {
         return depth;
     }
 
-    // متد جدید برای دریافت تمامی اورلودهای یک متد جهت بررسی معنایی آرگومان‌ها
     public List<SymbolInfo> lookupMethodOverloads(String name) {
         List<SymbolInfo> overloads = new ArrayList<>();
-        SymbolInfo baseMethod = lookup(name); // از متد لوکاپ اصلاح شده استفاده می‌کنیم
+
+        SymbolTable classScope = getCurrentClassScope();
+        if (classScope == null) {
+            classScope = getEnclosingScope(ScopeType.INTERFACE);
+        }
+
+        SymbolTable searchStart = (classScope != null) ? classScope : this;
+        SymbolInfo baseMethod = searchStart.lookup(name);
 
         if (baseMethod != null && (baseMethod.symbolType == SymbolInfo.SymbolType.METHOD
                 || baseMethod.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR)) {
             overloads.add(baseMethod);
             if (baseMethod.overloads != null) {
                 overloads.addAll(baseMethod.overloads);
+            }
+
+            Map<String, SymbolInfo> allSyms = searchStart.getAllSymbols();
+            for (Map.Entry<String, SymbolInfo> entry : allSyms.entrySet()) {
+                if (entry.getKey().startsWith(name + "_") && !entry.getValue().equals(baseMethod)) {
+                    if (!overloads.contains(entry.getValue())) {
+                        overloads.add(entry.getValue());
+                    }
+                }
             }
         }
         return overloads;
@@ -334,9 +382,23 @@ public class SymbolTable {
         for (SymbolTable child : childScopes)
             child.clear();
         childScopes.clear();
+        semanticErrors.clear();
     }
 
     public boolean hasSemanticErrors() {
-        return this.semanticErrors != null && !this.semanticErrors.isEmpty();
+        SymbolTable root = this;
+        while (root.parentScope != null) {
+            root = root.parentScope;
+        }
+        return root.semanticErrors != null && !root.semanticErrors.isEmpty();
     }
+
+    public void clearSemanticErrors() {
+        if (parentScope == null) {
+            semanticErrors.clear();
+        } else {
+            getRootScope().clearSemanticErrors();
+        }
+    }
+
 }

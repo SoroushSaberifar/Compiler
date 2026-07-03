@@ -1,42 +1,62 @@
 import grammar.javaMinusMinus2BaseListener;
 import grammar.javaMinusMinus2Parser;
-import java.util.*;
+import org.antlr.v4.runtime.Token;
+import org.antlr.v4.runtime.tree.ParseTree;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.Stack;
 
 public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
+
     private SymbolTable currentScope;
-    private Stack<SymbolTable> scopeStack;
-    private TypeChecker typeChecker;
+    private final Stack<SymbolTable> scopeStack = new Stack<>();
+    private final Stack<Integer> childIndexStack = new Stack<>();
+    private final TypeChecker typeChecker = new TypeChecker();
+
     private int currentChildScopeIndex = 0;
-    private Stack<Integer> childIndexStack;
 
     public SemanticAnalyzer(SymbolTable globalTable) {
         this.currentScope = globalTable;
-        this.scopeStack = new Stack<>();
-        this.childIndexStack = new Stack<>();
         this.scopeStack.push(globalTable);
-        this.typeChecker = new TypeChecker();
-    }
 
-    // --- مدیریت و همگام‌سازی اسکوپ‌ها در پاس دوم ---
-
-    private void pushChildScope() {
-        if (currentChildScopeIndex < currentScope.getChildScopes().size()) {
-            SymbolTable nextScope = currentScope.getChildScopes().get(currentChildScopeIndex);
-            scopeStack.push(nextScope);
-            childIndexStack.push(currentChildScopeIndex);
-            currentScope = nextScope;
-            currentChildScopeIndex = 0;
+        if (globalTable != null) {
+            checkInheritanceCycles(globalTable);
+            validateImports(globalTable);
         }
     }
 
+    private void pushChildScope() {
+        if (currentScope == null)
+            return;
+
+        List<SymbolTable> children = currentScope.getChildScopes();
+        if (children == null || currentChildScopeIndex < 0 || currentChildScopeIndex >= children.size()) {
+            return;
+        }
+
+        SymbolTable next = children.get(currentChildScopeIndex);
+        scopeStack.push(next);
+        childIndexStack.push(currentChildScopeIndex);
+        currentScope = next;
+        currentChildScopeIndex = 0;
+    }
+
     private void popScope() {
+        if (scopeStack.isEmpty())
+            return;
+
+        scopeStack.pop();
+
         if (!scopeStack.isEmpty()) {
-            scopeStack.pop();
-            if (!scopeStack.isEmpty()) {
-                currentScope = scopeStack.peek();
-                if (!childIndexStack.isEmpty()) {
-                    currentChildScopeIndex = childIndexStack.pop() + 1;
-                }
+            currentScope = scopeStack.peek();
+            if (!childIndexStack.isEmpty()) {
+                currentChildScopeIndex = childIndexStack.pop() + 1;
+            } else {
+                currentChildScopeIndex = 0;
             }
         }
     }
@@ -67,8 +87,20 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
     }
 
     @Override
+    public void exitMethodDecl(javaMinusMinus2Parser.MethodDeclContext ctx) {
+        validateMethodReturns(ctx);
+        popScope();
+    }
+
+    @Override
     public void enterCtorDecl(javaMinusMinus2Parser.CtorDeclContext ctx) {
         pushChildScope();
+    }
+
+    @Override
+    public void exitCtorDecl(javaMinusMinus2Parser.CtorDeclContext ctx) {
+        validateConstructorReturns(ctx);
+        popScope();
     }
 
     @Override
@@ -81,197 +113,209 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
         popScope();
     }
 
-    // --- پیاده‌سازی اعتبارسنجی‌ها و قوانین معنایی فاز دوم ---
     @Override
     public void enterIfElseStmt(javaMinusMinus2Parser.IfElseStmtContext ctx) {
-        if (ctx.expression() != null) {
-            String type = typeChecker.getExpressionType(ctx.expression(), currentScope);
-            if (!type.equals("boolean") && !type.equals("unknown")) {
-                currentScope.addSemanticError(String.format(
-                        "Line %d:%d - Condition inside 'if' must be boolean, found: %s",
-                        ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), type));
-            }
+        if (ctx == null || ctx.expression() == null)
+            return;
+
+        String condType = typeChecker.getExpressionType(ctx.expression(), currentScope);
+        if (!"unknown".equals(condType) && !"boolean".equals(condType)) {
+            addError(ctx.getStart(),
+                    "Condition of 'if' must be boolean, found: " + condType);
         }
     }
 
     @Override
     public void enterWhileStmt(javaMinusMinus2Parser.WhileStmtContext ctx) {
-        if (ctx.expression() != null) {
-            String type = typeChecker.getExpressionType(ctx.expression(), currentScope);
-            if (!type.equals("boolean") && !type.equals("unknown")) {
-                currentScope.addSemanticError(String.format(
-                        "Line %d:%d - Condition inside 'while' must be boolean, found: %s",
-                        ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), type));
-            }
+        if (ctx == null || ctx.expression() == null)
+            return;
+
+        String condType = typeChecker.getExpressionType(ctx.expression(), currentScope);
+        if (!"unknown".equals(condType) && !"boolean".equals(condType)) {
+            addError(ctx.getStart(),
+                    "Condition of 'while' must be boolean, found: " + condType);
         }
     }
 
-    /**
-     * بررسی دستورات انتساب (قانون assignment در گرامر)
-     */
     @Override
     public void enterAssignment(javaMinusMinus2Parser.AssignmentContext ctx) {
-        if (ctx.designator() == null || ctx.designator().primaryDesignator() == null)
+        if (ctx == null || ctx.designator() == null || ctx.expression() == null)
             return;
 
-        // استخراج نام متغیر از ابتدای دیزاینیتور
-        String varName = ctx.designator().primaryDesignator().getText();
-        SymbolInfo sym = currentScope.lookup(varName);
+        String lhsName = ctx.designator().getText();
+        SymbolInfo lhs = currentScope != null ? currentScope.lookup(lhsName) : null;
 
-        if (sym == null) {
-            currentScope.addSemanticError(String.format(
-                    "Line %d:%d - Assignment to undeclared variable '%s'",
-                    ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), varName));
+        if (lhs == null) {
+            addError(ctx.getStart(), "Assignment to undeclared identifier: " + lhsName);
             return;
         }
 
+        String leftType = resolveDesignatorType(ctx.designator(), lhs);
         String rightType = typeChecker.getExpressionType(ctx.expression(), currentScope);
-        String leftType = sym.dataType;
 
-        // بررسی اینکه آیا دیزاینیتور شامل دسترسی به آرایه (مثل `[i]`) است یا خیر
-        if (ctx.designator().designatorPrime() != null) {
-            String designatorText = ctx.designator().designatorPrime().getText();
-            if (designatorText.contains("[") && leftType.endsWith("[]")) {
-                leftType = leftType.substring(0, leftType.length() - 2);
+        if (!"unknown".equals(leftType) && !"unknown".equals(rightType)) {
+            if (!typeChecker.isTypeCompatible(leftType, rightType, currentScope)) {
+                addError(ctx.getStart(),
+                        "Type mismatch in assignment. Expected " + leftType + ", found " + rightType);
             }
         }
 
-        if (!rightType.equals("unknown") && !leftType.equals("unknown") && !leftType.equals(rightType)) {
-            // اجازه دادن به انتساب null به اشیاء غیر از انواع پایه
-            if (rightType.equals("null") && !leftType.equals("int") && !leftType.equals("boolean")
-                    && !leftType.equals("char")) {
-                return;
-            }
-            currentScope.addSemanticError(String.format(
-                    "Line %d:%d - Type mismatch in assignment to '%s'. Expected %s, found %s",
-                    ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), varName, leftType, rightType));
-        }
-    }
-
-    /**
-     * بررسی تطابق نوع در بازگشت متد (Return Type Mismatch)
-     */
-    @Override
-    public void exitMethodDecl(javaMinusMinus2Parser.MethodDeclContext ctx) {
-        String expectedReturnType = ctx.type() != null ? ctx.type().getText() : "void";
-        List<javaMinusMinus2Parser.StatementContext> returnStmts = findReturnStatements(ctx.methodBody());
-
-        if (expectedReturnType.equals("void")) {
-            for (javaMinusMinus2Parser.StatementContext retCtx : returnStmts) {
-                if (hasReturnExpression(retCtx)) {
-                    currentScope.addSemanticError(String.format(
-                            "Line %d:%d - Void method cannot return a value",
-                            retCtx.getStart().getLine(), retCtx.getStart().getCharPositionInLine()));
-                }
-            }
-        } else {
-            if (returnStmts.isEmpty()) {
-                currentScope.addSemanticError(String.format(
-                        "Line %d:%d - Missing return statement in method '%s'. Expected return type: %s",
-                        ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine(), ctx.Identifier().getText(),
-                        expectedReturnType));
-            } else {
-                for (javaMinusMinus2Parser.StatementContext retCtx : returnStmts) {
-                    if (!hasReturnExpression(retCtx)) {
-                        currentScope.addSemanticError(String.format(
-                                "Line %d:%d - Return statement missing expression. Expected return type: %s",
-                                retCtx.getStart().getLine(), retCtx.getStart().getCharPositionInLine(),
-                                expectedReturnType));
-                    } else {
-                        javaMinusMinus2Parser.ExpressionContext exprCtx = findExpressionInStatement(retCtx);
-                        if (exprCtx != null) {
-                            String actualType = typeChecker.getExpressionType(exprCtx, currentScope);
-                            if (!actualType.equals("unknown") && !actualType.equals(expectedReturnType)) {
-                                currentScope.addSemanticError(String.format(
-                                        "Line %d:%d - Type mismatch in return statement. Expected: %s, Found: %s",
-                                        retCtx.getStart().getLine(), retCtx.getStart().getCharPositionInLine(),
-                                        expectedReturnType, actualType));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        popScope();
-    }
-
-    @Override
-    public void exitCtorDecl(javaMinusMinus2Parser.CtorDeclContext ctx) {
-        List<javaMinusMinus2Parser.StatementContext> returnStmts = findReturnStatements(ctx.methodBody());
-        for (javaMinusMinus2Parser.StatementContext retCtx : returnStmts) {
-            if (hasReturnExpression(retCtx)) {
-                currentScope.addSemanticError(String.format(
-                        "Line %d:%d - Constructor cannot return a value",
-                        retCtx.getStart().getLine(), retCtx.getStart().getCharPositionInLine()));
-            }
-        }
-        popScope();
+        lhs.isInitialized = true;
     }
 
     @Override
     public void enterExpression(javaMinusMinus2Parser.ExpressionContext ctx) {
-        // برای گره‌های تکی فرعی چاره‌ای جز ارزیابی کلی نوع اکسپرشن و بازگذاری خطاهای
-        // درونی آن نداریم
-        typeChecker.getExpressionType(ctx, currentScope);
-    }
-
-    // --- متدهای امن کمکی برای پیمایش مستقل از ساختار جنریت‌شده کامپایلر ارور ---
-
-    private List<javaMinusMinus2Parser.StatementContext> findReturnStatements(
-            javaMinusMinus2Parser.MethodBodyContext ctx) {
-        List<javaMinusMinus2Parser.StatementContext> list = new ArrayList<>();
-        if (ctx == null || ctx.statement() == null)
-            return list;
-
-        for (javaMinusMinus2Parser.StatementContext stmt : ctx.statement()) {
-            collectReturnStmtsRecursive(stmt, list);
+        if (ctx != null) {
+            typeChecker.getExpressionType(ctx, currentScope);
         }
-        return list;
     }
 
-    private void collectReturnStmtsRecursive(javaMinusMinus2Parser.StatementContext stmt,
-            List<javaMinusMinus2Parser.StatementContext> list) {
-        if (stmt == null)
+    private void validateMethodReturns(javaMinusMinus2Parser.MethodDeclContext ctx) {
+        if (ctx == null)
             return;
 
-        String cleanText = stmt.getText().trim();
-        if (cleanText.startsWith("return")) {
-            list.add(stmt);
-        }
+        String expectedType = (ctx.type() != null) ? ctx.type().getText() : "void";
+        List<ReturnInfo> returns = new ArrayList<>();
+        collectReturnsRecursive(ctx.methodBody(), returns);
 
-        for (int i = 0; i < stmt.getChildCount(); i++) {
-            org.antlr.v4.runtime.tree.ParseTree child = stmt.getChild(i);
-            if (child instanceof javaMinusMinus2Parser.StatementContext) {
-                collectReturnStmtsRecursive((javaMinusMinus2Parser.StatementContext) child, list);
-            } else if (child instanceof javaMinusMinus2Parser.BlockStmtContext) {
-                javaMinusMinus2Parser.BlockStmtContext bCtx = (javaMinusMinus2Parser.BlockStmtContext) child;
-                if (bCtx.statement() != null) {
-                    for (javaMinusMinus2Parser.StatementContext subStmt : bCtx.statement()) {
-                        collectReturnStmtsRecursive(subStmt, list);
-                    }
+        if ("void".equals(expectedType)) {
+            for (ReturnInfo r : returns) {
+                if (r.hasExpression) {
+                    addError(r.token, "Void method cannot return a value");
                 }
             }
+            return;
         }
-    }
 
-    private boolean hasReturnExpression(javaMinusMinus2Parser.StatementContext retCtx) {
-        String txt = retCtx.getText().trim();
-        return txt.length() > 7 && !txt.equals("return;");
-    }
+        if (returns.isEmpty()) {
+            addError(ctx.getStart(),
+                    "Missing return statement in method '" + safeName(ctx.Identifier()) + "'");
+            return;
+        }
 
-    private javaMinusMinus2Parser.ExpressionContext findExpressionInStatement(
-            org.antlr.v4.runtime.tree.ParseTree stmtCtx) {
-        if (stmtCtx == null)
-            return null;
-        for (int i = 0; i < stmtCtx.getChildCount(); i++) {
-            org.antlr.v4.runtime.tree.ParseTree child = stmtCtx.getChild(i);
-            if (child instanceof javaMinusMinus2Parser.ExpressionContext) {
-                return (javaMinusMinus2Parser.ExpressionContext) child;
+        for (ReturnInfo r : returns) {
+            if (!r.hasExpression) {
+                addError(r.token, "Missing return expression for non-void method");
+                continue;
             }
-            javaMinusMinus2Parser.ExpressionContext res = findExpressionInStatement(child);
-            if (res != null)
-                return res;
+
+            String actualType = typeChecker.getExpressionType(r.expressionCtx, currentScope);
+            if (!"unknown".equals(actualType)
+                    && !typeChecker.isTypeCompatible(expectedType, actualType, currentScope)) {
+                addError(r.token,
+                        "Return type mismatch. Expected " + expectedType + ", found " + actualType);
+            }
         }
-        return null;
+    }
+
+    private void validateConstructorReturns(javaMinusMinus2Parser.CtorDeclContext ctx) {
+        if (ctx == null)
+            return;
+
+        List<ReturnInfo> returns = new ArrayList<>();
+        collectReturnsRecursive(ctx.methodBody(), returns);
+        for (ReturnInfo r : returns) {
+            if (r.hasExpression) {
+                addError(r.token, "Constructor cannot return a value");
+            }
+        }
+    }
+
+    private static class ReturnInfo {
+        final Token token;
+        final boolean hasExpression;
+        final javaMinusMinus2Parser.ExpressionContext expressionCtx;
+
+        ReturnInfo(Token token, boolean hasExpression, javaMinusMinus2Parser.ExpressionContext expressionCtx) {
+            this.token = token;
+            this.hasExpression = hasExpression;
+            this.expressionCtx = expressionCtx;
+        }
+    }
+
+    private void collectReturnsRecursive(ParseTree node, List<ReturnInfo> returns) {
+        if (node == null)
+            return;
+
+        if (node instanceof javaMinusMinus2Parser.MethodBodyContext) {
+            javaMinusMinus2Parser.MethodBodyContext mb = (javaMinusMinus2Parser.MethodBodyContext) node;
+            if (mb.RETURN() != null) {
+                Token t = mb.RETURN().getSymbol();
+                returns.add(new ReturnInfo(t, mb.expression() != null, mb.expression()));
+            }
+        }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+            collectReturnsRecursive(node.getChild(i), returns);
+        }
+    }
+
+    private String resolveDesignatorType(javaMinusMinus2Parser.DesignatorContext ctx, SymbolInfo base) {
+        if (ctx == null || base == null)
+            return "unknown";
+        if (base.dataType == null)
+            return "unknown";
+        return base.dataType;
+    }
+
+    private String safeName(Object node) {
+        return node == null ? "<anonymous>" : node.toString();
+    }
+
+    private void addError(Token token, String message) {
+        if (currentScope == null || token == null)
+            return;
+        currentScope.addSemanticError(
+                "Line " + token.getLine() + ":" + token.getCharPositionInLine() + " - " + message);
+    }
+
+    private void checkInheritanceCycles(SymbolTable globalTable) {
+        if (globalTable == null)
+            return;
+
+        Map<String, SymbolInfo> symbols = globalTable.getSymbols();
+        if (symbols == null)
+            return;
+
+        for (SymbolInfo s : symbols.values()) {
+            if (s == null || s.symbolType != SymbolInfo.SymbolType.CLASS)
+                continue;
+
+            Set<String> seen = new HashSet<>();
+            String cur = s.name;
+
+            while (cur != null) {
+                if (seen.contains(cur)) {
+                    globalTable.addSemanticError("Inheritance cycle detected involving class: " + cur);
+                    break;
+                }
+
+                seen.add(cur);
+                SymbolInfo cls = globalTable.lookup(cur);
+                if (cls == null || cls.parentClass == null || cls.parentClass.isBlank())
+                    break;
+
+                cur = cls.parentClass;
+            }
+        }
+    }
+
+    private void validateImports(SymbolTable globalTable) {
+        if (globalTable == null)
+            return;
+
+        Map<String, SymbolInfo> symbols = globalTable.getSymbols();
+        if (symbols == null)
+            return;
+
+        Set<String> seenImports = new HashSet<>();
+        for (SymbolInfo s : symbols.values()) {
+            if (s == null || s.symbolType != SymbolInfo.SymbolType.IMPORT)
+                continue;
+
+            if (!seenImports.add(s.name)) {
+                globalTable.addSemanticError("Duplicate import declaration: " + s.name);
+            }
+        }
     }
 }
