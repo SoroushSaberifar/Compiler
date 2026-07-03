@@ -32,28 +32,53 @@ public class Main {
         String fileName = args[0];
         String input = readFile(fileName);
 
+        // ۱. اجرای فاز تحلیل لغوی (Lexical Phase)
         tokenizeAndCollect(input);
 
         if (!errors.isEmpty()) {
-            System.out.println("\n===== ERRORS =====");
+            System.out.println("\n===== LEXICAL ERRORS =====");
             for (String err : errors)
                 System.out.println(err);
             return;
         }
 
+        // ۲. ساخت جدول نمادها (پاس اول آنالیز معنایی)
         globalTable = new SymbolTable(SymbolTable.ScopeType.GLOBAL, "GLOBAL", null);
-        buildSymbolTable(input);
+        ParseTree tree = buildSymbolTable(input);
 
-        // ۱. چاپ ساختار اسکوپ‌ها مطابق نمونه پروژه
+        if (!errors.isEmpty()) {
+            System.out.println("\n===== SYNTAX ERRORS =====");
+            for (String err : errors)
+                System.out.println(err);
+            return;
+        }
+
+        // ۳. اجرای فاز دوم آنالیز معنایی (تطابق انواع داده و شروط)
+        globalTable.enableErrorReporting(); // فعال‌سازی ثبت خطاهای معنایی
+        SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(globalTable);
+        ParseTreeWalker walker = new ParseTreeWalker();
+        walker.walk(semanticAnalyzer, tree);
+
+        // ۴. چاپ ساختار اسکوپ‌ها مطابق نمونه پروژه
         System.out.println("\nSymbol Table Scope Structure");
         printScopeStructure(globalTable, "GLOBAL");
 
-        // ۲. چاپ جدول نمادهای نهایی به صورت فرمت‌شده
+        // ۵. چاپ جدول نمادهای نهایی به صورت فرمت‌شده
         System.out.println("\nSymbol Table");
         System.out.printf("%-6s %-15s | %-12s | %-10s | %-20s | %-15s%n", "Index", "Name", "Kind", "Type", "Scope",
                 "Initial Value");
         System.out.println("-".repeat(85));
         printFlatSymbolTable(globalTable, new int[] { 0 }, "GLOBAL");
+
+        // ۶. بررسی و چاپ نهایی خطاهای معنایی (Semantic Errors)
+        if (globalTable.hasSemanticErrors()) {
+            System.out.println("\n===== SEMANTIC ERRORS =====");
+            for (String semanticErr : globalTable.getSemanticErrors()) {
+                System.out.println(semanticErr);
+            }
+        } else {
+            System.out.println("\nSemantic Analysis Passed Successfully (No Errors).");
+        }
     }
 
     private static void tokenizeAndCollect(String input) {
@@ -83,25 +108,22 @@ public class Main {
                     tokenName = token.getText();
                 }
 
-                // اعمال نگاشت نام توکن‌ها طبق الگوی داکیومنت پروژه
                 if (TOKEN_NAME_MAP.containsKey(tokenName)) {
                     tokenName = TOKEN_NAME_MAP.get(tokenName);
-                } else if (tokenName.equals("Identifier")) {
+                } else if ("Identifier".equals(tokenName)) {
                     tokenName = "IDENTIFIER";
-                } else if (tokenName.equals("StringLiteral")) {
+                } else if ("StringLiteral".equals(tokenName)) {
                     tokenName = "STRING_LITERAL";
-                } else if (tokenName.equals("IntegerLiteral")) {
+                } else if ("IntegerLiteral".equals(tokenName)) {
                     tokenName = "INTEGER_LITERAL";
-                } else {
-                    // تبدیل کلمات کلیدی به حروف بزرگ (مثل class -> CLASS)
+                } else if (tokenName != null) {
                     tokenName = tokenName.toUpperCase();
                 }
 
                 String text = token.getText().replace("\n", "\\n").replace("\r", "\\r");
 
-                // طبق نمونه خروجی، برای پرانتزها و آکولادها رشته متن توکن خالی چاپ می‌شود
-                if (tokenName.equals("LBRACE") || tokenName.equals("RBRACE") ||
-                        tokenName.equals("LBRACKET") || tokenName.equals("RBRACKET")) {
+                if ("LBRACE".equals(tokenName) || "RBRACE".equals(tokenName) ||
+                        "LBRACKET".equals(tokenName) || "RBRACKET".equals(tokenName)) {
                     text = "";
                 }
 
@@ -113,7 +135,7 @@ public class Main {
         }
     }
 
-    private static void buildSymbolTable(String input) {
+    private static ParseTree buildSymbolTable(String input) {
         CharStream stream = CharStreams.fromString(input);
         javaMinusMinus2Lexer lexer = new javaMinusMinus2Lexer(stream);
         CommonTokenStream tokenStream = new CommonTokenStream(lexer);
@@ -129,9 +151,13 @@ public class Main {
 
         ParseTree tree = parser.program();
         CompleteSymbolTableBuilder builder = new CompleteSymbolTableBuilder(globalTable);
+
+        // غیرفعال کردن گزارش خطا در پاس اول برای جلوگیری از تداخل ساخت اسکوپ‌ها
         globalTable.disableErrorReporting();
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(builder, tree);
+
+        return tree; // بازگرداندن درخت برای استفاده در پاس دوم (SemanticAnalyzer)
     }
 
     private static void printScopeStructure(SymbolTable table, String fullPath) {
@@ -153,7 +179,6 @@ public class Main {
         }
 
         for (SymbolTable child : table.getChildScopes()) {
-            // اصلاح فرمت‌دهی اسکوپ فرزند تا GLOBAL به ابتدای مسیر کلاس‌ها نچسبد
             String childPath = fullPath.equals("GLOBAL") ? child.getScopeName()
                     : fullPath + "::" + child.getScopeName();
             printScopeStructure(child, childPath);
@@ -185,8 +210,9 @@ public class Main {
         StringBuilder sb = new StringBuilder();
         try (BufferedReader br = new BufferedReader(new FileReader(fileName))) {
             String line;
-            while ((line = br.readLine()) != null)
+            while ((line = br.readLine()) != null) {
                 sb.append(line).append("\n");
+            }
         }
         return sb.toString();
     }

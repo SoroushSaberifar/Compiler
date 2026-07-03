@@ -30,7 +30,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         }
     }
 
-    // متد کمکی برای استخراج موقعیت توکن در سند متنی
     private void setLocationInfo(SymbolInfo info, ParserRuleContext ctx) {
         if (ctx != null && ctx.getStart() != null) {
             info.setLocation(ctx.getStart().getLine(), ctx.getStart().getCharPositionInLine());
@@ -57,7 +56,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
     @Override
     public void enterImportDecl(javaMinusMinus2Parser.ImportDeclContext ctx) {
         StringBuilder importPath = new StringBuilder();
-
         for (int i = 0; i < ctx.Identifier().size(); i++) {
             if (i > 0)
                 importPath.append(".");
@@ -80,37 +78,29 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         }
     }
 
+    // حذف اسکوپ‌های موازی برای جلوگیری از تداخل با enterBlockStmt
     @Override
     public void enterForStmt(javaMinusMinus2Parser.ForStmtContext ctx) {
-        SymbolTable forScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "for-loop", currentScope);
-        pushScope(forScope);
     }
 
     @Override
     public void exitForStmt(javaMinusMinus2Parser.ForStmtContext ctx) {
-        popScope();
     }
 
     @Override
     public void enterWhileStmt(javaMinusMinus2Parser.WhileStmtContext ctx) {
-        SymbolTable whileScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "while-loop", currentScope);
-        pushScope(whileScope);
     }
 
     @Override
     public void exitWhileStmt(javaMinusMinus2Parser.WhileStmtContext ctx) {
-        popScope();
     }
 
     @Override
     public void enterIfElseStmt(javaMinusMinus2Parser.IfElseStmtContext ctx) {
-        SymbolTable ifScope = new SymbolTable(SymbolTable.ScopeType.BLOCK, "if-statement", currentScope);
-        pushScope(ifScope);
     }
 
     @Override
     public void exitIfElseStmt(javaMinusMinus2Parser.IfElseStmtContext ctx) {
-        popScope();
     }
 
     @Override
@@ -166,12 +156,10 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
     @Override
     public void enterClassDecl(grammar.javaMinusMinus2Parser.ClassDeclContext ctx) {
-        if (ctx.Identifier() == null || ctx.Identifier().isEmpty()) {
+        if (ctx.Identifier() == null || ctx.Identifier().isEmpty())
             return;
-        }
 
         String className = ctx.Identifier(0).getText();
-
         boolean isAbstract = false;
         if (ctx.getChildCount() > 0 && ctx.getChild(0).getText().equals("abstract")) {
             isAbstract = true;
@@ -179,10 +167,7 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
         String parent = null;
         List<String> interfaces = new ArrayList<>();
-
-        int extendsIdx = -1;
-        int implementsIdx = -1;
-        int openBraceIdx = -1;
+        int extendsIdx = -1, implementsIdx = -1, openBraceIdx = -1;
 
         for (int i = 0; i < ctx.getChildCount(); i++) {
             String childText = ctx.getChild(i).getText();
@@ -206,9 +191,8 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
                 }
             }
 
-            if (openBraceIdx != -1 && currentChildPos >= openBraceIdx) {
+            if (openBraceIdx != -1 && currentChildPos >= openBraceIdx)
                 break;
-            }
 
             if (extendsIdx != -1 && currentChildPos > extendsIdx
                     && (implementsIdx == -1 || currentChildPos < implementsIdx)) {
@@ -218,13 +202,12 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
             }
         }
 
-        // افزودن سمبل کلاس با تصحیح پاس دادن موقعیت خط
         if (currentScope.lookupCurrentScopeOnly(className) == null) {
             SymbolInfo info = new SymbolInfo(className, SymbolInfo.SymbolType.CLASS);
             info.dataType = "class";
             info.isAbstract = isAbstract;
             info.parentClass = parent;
-            if (interfaces != null && !interfaces.isEmpty())
+            if (!interfaces.isEmpty())
                 info.implementedInterfaces = interfaces;
             setLocationInfo(info, ctx);
             currentScope.insert(info);
@@ -236,7 +219,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
     @Override
     public void exitClassDecl(javaMinusMinus2Parser.ClassDeclContext ctx) {
-        // فقط در صورتی پاپ کنید که اسکوپ فعلی واقعاً متعلق به همین کلاس باشد
         if (ctx.Identifier() != null && !ctx.Identifier().isEmpty()) {
             String className = ctx.Identifier(0).getText();
             if (currentScope.getScopeName().equals(className)) {
@@ -271,7 +253,7 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
     public void enterInterfaceFieldDecl(javaMinusMinus2Parser.InterfaceFieldDeclContext ctx) {
         String fieldType = ctx.type().getText();
         String fieldName = ctx.Identifier().getText();
-        String initValue = ctx.expression().getText();
+        String initValue = (ctx.expression() != null) ? ctx.expression().getText() : null;
 
         if (currentScope.lookupCurrentScopeOnly(fieldName) == null) {
             SymbolInfo field = new SymbolInfo(fieldName, SymbolInfo.SymbolType.FIELD);
@@ -312,13 +294,12 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
             return;
 
         RuleContext parent = ctx.getParent();
-        if (!(parent instanceof javaMinusMinus2Parser.ClassDeclContext ||
-                parent instanceof javaMinusMinus2Parser.InterfaceDeclContext)) {
+        if (!(parent instanceof javaMinusMinus2Parser.ClassDeclContext
+                || parent instanceof javaMinusMinus2Parser.InterfaceDeclContext)) {
             return;
         }
 
         String methodName = ctx.Identifier().getText();
-
         SymbolInfo existing = currentScope.lookupCurrentScopeOnly(methodName);
         if (existing != null && existing.symbolType == SymbolInfo.SymbolType.FIELD) {
             return;
@@ -326,7 +307,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
         String returnType = (ctx.type() != null) ? ctx.type().getText() : "void";
 
-        // ایمن‌سازی بررسی توکن‌های مودیفایر متد به جای واکشی متنی خام کل کانتکست
         boolean isOverride = false;
         boolean isAbstract = false;
         for (int i = 0; i < ctx.getChildCount(); i++) {
@@ -349,18 +329,15 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         if (ctx.parameterList() != null) {
             for (grammar.javaMinusMinus2Parser.ParameterContext param : ctx.parameterList().parameter()) {
                 if (param.Identifier() != null && param.type() != null) {
-                    method.parameters.add(new SymbolInfo.ParameterInfo(
-                            param.Identifier().getText(),
-                            param.type().getText()));
+                    method.parameters
+                            .add(new SymbolInfo.ParameterInfo(param.Identifier().getText(), param.type().getText()));
                 }
             }
         }
 
         currentScope.insert(method);
-
-        if (isAbstract) {
+        if (isAbstract)
             return;
-        }
 
         SymbolTable methodScope = new SymbolTable(SymbolTable.ScopeType.METHOD, methodName, currentScope);
         pushScope(methodScope);
@@ -389,13 +366,11 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         }
 
         SymbolInfo existing = currentScope.lookupCurrentScopeOnly(methodName);
-        if (existing != null && existing.symbolType == SymbolInfo.SymbolType.FIELD) {
+        if (existing != null && existing.symbolType == SymbolInfo.SymbolType.FIELD)
             return;
-        }
 
-        if (!isAbstract) {
+        if (!isAbstract)
             popScope();
-        }
     }
 
     @Override
@@ -405,7 +380,13 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
         String methodName = ctx.Identifier().getText();
         String returnType = (ctx.type() != null) ? ctx.type().getText() : "void";
-        boolean isOverride = ctx.getText().contains("@Override");
+
+        boolean isOverride = false;
+        for (int i = 0; i < ctx.getChildCount(); i++) {
+            if (ctx.getChild(i).getText().equals("@Override"))
+                isOverride = true;
+        }
+
         SymbolInfo.AccessModifier access = getAccessModifier(ctx.accessModifier());
 
         SymbolInfo method = new SymbolInfo(methodName, SymbolInfo.SymbolType.METHOD);
@@ -418,9 +399,8 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         if (ctx.parameterList() != null) {
             for (grammar.javaMinusMinus2Parser.ParameterContext param : ctx.parameterList().parameter()) {
                 if (param.Identifier() != null && param.type() != null) {
-                    method.parameters.add(new SymbolInfo.ParameterInfo(
-                            param.Identifier().getText(),
-                            param.type().getText()));
+                    method.parameters
+                            .add(new SymbolInfo.ParameterInfo(param.Identifier().getText(), param.type().getText()));
                 }
             }
         }
@@ -442,7 +422,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         }
         currentScope.insert(ctor);
 
-        // همگام‌سازی نام اسکوپ با ساختار جستجوی سمبل تیبل جدید
         SymbolTable ctorScope = new SymbolTable(SymbolTable.ScopeType.METHOD, ctorName, currentScope);
         pushScope(ctorScope);
 
@@ -486,11 +465,13 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
             String varType = ctx.localDecl().type().getText();
             String varName = ctx.localDecl().Identifier().getText();
 
-            SymbolInfo varInfo = new SymbolInfo(varName, SymbolInfo.SymbolType.VARIABLE);
-            varInfo.dataType = varType;
-            varInfo.scopeLevel = "local";
-
-            currentScope.insert(varInfo);
+            if (currentScope.lookupCurrentScopeOnly(varName) == null) {
+                SymbolInfo varInfo = new SymbolInfo(varName, SymbolInfo.SymbolType.VARIABLE);
+                varInfo.dataType = varType;
+                varInfo.scopeLevel = "local";
+                setLocationInfo(varInfo, ctx); // رفع مشکل فراموشی تنظیم لوکیشن خط خطا
+                currentScope.insert(varInfo);
+            }
         }
     }
 

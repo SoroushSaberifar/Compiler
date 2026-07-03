@@ -41,6 +41,8 @@ public class SymbolInfo {
     public String scopeLevel;
     public String initialValue;
 
+    public int arraySize = -1;
+
     public int lineNumber;
     public int columnNumber;
 
@@ -75,6 +77,9 @@ public class SymbolInfo {
     }
 
     public boolean sameSignature(SymbolInfo other) {
+        // علاوه بر نوع و پارامتر، نام متد/سازنده هم باید یکسان باشد
+        if (!this.name.equals(other.name))
+            return false;
         if (this.symbolType != other.symbolType)
             return false;
         if (this.parameters.size() != other.parameters.size())

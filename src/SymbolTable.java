@@ -42,7 +42,7 @@ public class SymbolTable {
         if (errorReportingEnabled) {
             semanticErrors.add(error);
             System.err.println("Semantic error: " + error);
-            
+
             // هدایت خطا به اسکوپ ریشه (Global) برای دسترسی و گزارش‌گیری راحت در کلاس Main
             SymbolTable root = this;
             while (root.parentScope != null) {
@@ -86,24 +86,24 @@ public class SymbolTable {
                     existing.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
 
                 if (existing.sameSignature(info)) {
-                    addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + 
-                        " - Duplicate method/constructor: " + info.name + info.getParameterString());
+                    addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber +
+                            " - Duplicate method/constructor: " + info.name + info.getParameterString());
                     return;
                 }
                 existing.addOverload(info);
                 return;
             } else {
-                addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + 
-                    " - Name conflict: " + info.name + " cannot be declared as " + info.symbolType +
-                    " because a " + existing.symbolType + " with the same name exists");
+                addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber +
+                        " - Name conflict: " + info.name + " cannot be declared as " + info.symbolType +
+                        " because a " + existing.symbolType + " with the same name exists");
                 return;
             }
         }
 
         // خطای بازتعریف متغیر، فیلد یا پارامتر در یک اسکوپ واحد (بند اول فاز ۲)
-        addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + 
-            " - Redeclaration of '" + name + "' as " + info.symbolType +
-            " (previous declaration was " + existing.symbolType + ")");
+        addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber +
+                " - Redeclaration of '" + name + "' as " + info.symbolType +
+                " (previous declaration was " + existing.symbolType + ")");
     }
 
     public boolean insertIfAbsent(SymbolInfo info) {
@@ -126,9 +126,15 @@ public class SymbolTable {
         if (symbols.containsKey(name))
             return symbols.get(name);
 
+        // اصلاح شرط برای جلوگیری از تطابق اشتباه نام‌های مشابه
         for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
-            if (entry.getKey().startsWith(name + "_") || entry.getKey().equals(name)) {
-                return entry.getValue();
+            if (entry.getKey().equals(name) || entry.getKey().startsWith(name + "._")
+                    || entry.getKey().startsWith(name + "_")) {
+                // یک بررسی دقیق‌تر: مطمئن شویم کاراکتر بعد از نام متد، جداکننده است نه ادامه
+                // نام یک متد دیگر
+                if (entry.getKey().startsWith(name + "_")) {
+                    return entry.getValue();
+                }
             }
         }
 
@@ -141,8 +147,9 @@ public class SymbolTable {
         if (symbols.containsKey(name))
             return symbols.get(name);
 
+        // اصلاح شرط در اسکوپ فعلی
         for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
-            if (entry.getKey().startsWith(name + "_") || entry.getKey().equals(name)) {
+            if (entry.getKey().equals(name) || entry.getKey().startsWith(name + "_")) {
                 return entry.getValue();
             }
         }
@@ -307,10 +314,29 @@ public class SymbolTable {
         return depth;
     }
 
+    // متد جدید برای دریافت تمامی اورلودهای یک متد جهت بررسی معنایی آرگومان‌ها
+    public List<SymbolInfo> lookupMethodOverloads(String name) {
+        List<SymbolInfo> overloads = new ArrayList<>();
+        SymbolInfo baseMethod = lookup(name); // از متد لوکاپ اصلاح شده استفاده می‌کنیم
+
+        if (baseMethod != null && (baseMethod.symbolType == SymbolInfo.SymbolType.METHOD
+                || baseMethod.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR)) {
+            overloads.add(baseMethod);
+            if (baseMethod.overloads != null) {
+                overloads.addAll(baseMethod.overloads);
+            }
+        }
+        return overloads;
+    }
+
     public void clear() {
         symbols.clear();
         for (SymbolTable child : childScopes)
             child.clear();
         childScopes.clear();
+    }
+
+    public boolean hasSemanticErrors() {
+        return this.semanticErrors != null && !this.semanticErrors.isEmpty();
     }
 }
