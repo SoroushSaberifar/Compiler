@@ -42,6 +42,15 @@ public class SymbolTable {
         if (errorReportingEnabled) {
             semanticErrors.add(error);
             System.err.println("Semantic error: " + error);
+            
+            // هدایت خطا به اسکوپ ریشه (Global) برای دسترسی و گزارش‌گیری راحت در کلاس Main
+            SymbolTable root = this;
+            while (root.parentScope != null) {
+                root = root.parentScope;
+            }
+            if (root != this && !root.semanticErrors.contains(error)) {
+                root.semanticErrors.add(error);
+            }
         }
     }
 
@@ -53,22 +62,23 @@ public class SymbolTable {
         String name = info.name;
         SymbolInfo existing = symbols.get(name);
 
+        // اگر از قبل وجود نداشته باشد، به راحتی درج می‌شود
         if (existing == null) {
             symbols.put(name, info);
             return;
         }
 
+        // اگر گزارش خطا غیرفعال باشد (پاس‌های پیش‌پردازش اختیاری)
         if (!errorReportingEnabled) {
             if (info.symbolType == SymbolInfo.SymbolType.METHOD ||
                     info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
                 String uniqueName = name + "_" + info.getParameterString();
                 symbols.put(uniqueName, info);
-            } else {
-                return;
             }
             return;
         }
 
+        // مدیریت بازنویسی و خطای متدها و سازنده‌ها
         if (info.symbolType == SymbolInfo.SymbolType.METHOD ||
                 info.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
 
@@ -76,20 +86,24 @@ public class SymbolTable {
                     existing.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR) {
 
                 if (existing.sameSignature(info)) {
-                    addSemanticError("Duplicate method/constructor: " + info.name + info.getParameterString());
+                    addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + 
+                        " - Duplicate method/constructor: " + info.name + info.getParameterString());
                     return;
                 }
                 existing.addOverload(info);
                 return;
             } else {
-                addSemanticError("Name conflict: " + info.name + " cannot be declared as " + info.symbolType +
-                        " because a " + existing.symbolType + " with the same name exists");
+                addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + 
+                    " - Name conflict: " + info.name + " cannot be declared as " + info.symbolType +
+                    " because a " + existing.symbolType + " with the same name exists");
                 return;
             }
         }
 
-        addSemanticError("Redeclaration of '" + name + "' as " + info.symbolType +
-                " (previous: " + existing.symbolType + ")");
+        // خطای بازتعریف متغیر، فیلد یا پارامتر در یک اسکوپ واحد (بند اول فاز ۲)
+        addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber + 
+            " - Redeclaration of '" + name + "' as " + info.symbolType +
+            " (previous declaration was " + existing.symbolType + ")");
     }
 
     public boolean insertIfAbsent(SymbolInfo info) {
@@ -112,7 +126,6 @@ public class SymbolTable {
         if (symbols.containsKey(name))
             return symbols.get(name);
 
-        // اصلاح بخش اورلودها متناسب با کلید نام متد
         for (Map.Entry<String, SymbolInfo> entry : symbols.entrySet()) {
             if (entry.getKey().startsWith(name + "_") || entry.getKey().equals(name)) {
                 return entry.getValue();
