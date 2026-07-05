@@ -3,11 +3,13 @@ import org.antlr.v4.runtime.tree.*;
 
 import java.io.*;
 import java.util.*;
+
 import grammar.javaMinusMinus2Lexer;
 import grammar.javaMinusMinus2Parser;
 
 public class Main {
-    private static List<String> errors = new ArrayList<>();
+
+    private static final List<String> errors = new ArrayList<>();
     private static SymbolTable globalTable;
 
     private static final Map<String, String> TOKEN_NAME_MAP = new HashMap<>();
@@ -30,10 +32,24 @@ public class Main {
             return;
         }
 
-        String fileName = args[0];
-        String input = readFile(fileName);
+        String input = readFile(args[0]);
 
-        tokenizeAndCollect(input);
+        CharStream stream = CharStreams.fromString(input);
+        javaMinusMinus2Lexer lexer = new javaMinusMinus2Lexer(stream);
+
+        lexer.removeErrorListeners();
+        lexer.addErrorListener(new BaseErrorListener() {
+            @Override
+            public void syntaxError(Recognizer<?, ?> r, Object off,
+                    int line, int col, String msg, RecognitionException e) {
+                errors.add("Lexical error at " + line + ":" + col + " - " + msg);
+            }
+        });
+
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        tokens.fill();
+
+        printTokens(lexer, tokens);
 
         if (!errors.isEmpty()) {
             System.out.println("\n===== LEXICAL ERRORS =====");
@@ -41,8 +57,19 @@ public class Main {
             return;
         }
 
-        globalTable = new SymbolTable(SymbolTable.ScopeType.GLOBAL, "GLOBAL", null);
-        ParseTree tree = buildSymbolTable(input);
+        tokens.seek(0);
+        javaMinusMinus2Parser parser = new javaMinusMinus2Parser(tokens);
+
+        parser.removeErrorListeners();
+        parser.addErrorListener(new BaseErrorListener() {
+            @Override
+            public void syntaxError(Recognizer<?, ?> r, Object off,
+                    int line, int col, String msg, RecognitionException e) {
+                errors.add("Syntax error at " + line + ":" + col + " - " + msg);
+            }
+        });
+
+        ParseTree tree = parser.program();
 
         if (!errors.isEmpty()) {
             System.out.println("\n===== SYNTAX ERRORS =====");
@@ -50,9 +77,14 @@ public class Main {
             return;
         }
 
+        globalTable = new SymbolTable(SymbolTable.ScopeType.GLOBAL, "GLOBAL", null);
         globalTable.enableErrorReporting();
-        SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(globalTable);
+
+        CompleteSymbolTableBuilder builder = new CompleteSymbolTableBuilder(globalTable);
         ParseTreeWalker walker = new ParseTreeWalker();
+        walker.walk(builder, tree);
+
+        SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(globalTable);
         walker.walk(semanticAnalyzer, tree);
 
         System.out.println("\nSymbol Table Scope Structure");
@@ -64,33 +96,23 @@ public class Main {
         System.out.println("-".repeat(85));
         printFlatSymbolTable(globalTable, new int[] { 0 }, "GLOBAL");
 
+        Set<String> semanticErrors = new LinkedHashSet<>();
         if (globalTable.hasSemanticErrors()) {
+            semanticErrors.addAll(globalTable.getSemanticErrors());
+        }
+        semanticErrors.addAll(semanticAnalyzer.getErrors());
+
+        if (!semanticErrors.isEmpty()) {
             System.out.println("\n===== SEMANTIC ERRORS =====");
-            globalTable.getSemanticErrors().forEach(System.out::println);
+            semanticErrors.forEach(System.out::println);
         } else {
             System.out.println("\nSemantic Analysis Passed Successfully (No Errors).");
         }
     }
 
-    private static void tokenizeAndCollect(String input) {
+    private static void printTokens(javaMinusMinus2Lexer lexer, CommonTokenStream tokens) {
 
-        CharStream stream = CharStreams.fromString(input);
-        javaMinusMinus2Lexer lexer = new javaMinusMinus2Lexer(stream);
-
-        lexer.removeErrorListeners();
-        lexer.addErrorListener(new BaseErrorListener() {
-            @Override
-            public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol,
-                    int line, int col, String msg, RecognitionException e) {
-                errors.add("Lexical error at " + line + ":" + col + " - " + msg);
-            }
-        });
-
-        CommonTokenStream tokens = new CommonTokenStream(lexer);
-        tokens.fill();
-
-        long count = tokens.getTokens()
-                .stream()
+        long count = tokens.getTokens().stream()
                 .filter(t -> t.getType() != Token.EOF)
                 .count();
 
@@ -112,7 +134,7 @@ public class Main {
                 name = "STRING_LITERAL";
             } else if ("IntegerLiteral".equals(name)) {
                 name = "INTEGER_LITERAL";
-            } else if (name != null) {
+            } else {
                 name = name.toUpperCase();
             }
 
@@ -127,50 +149,19 @@ public class Main {
             int line = token.getLine();
             int col = token.getCharPositionInLine() + 1;
 
-            System.out.printf("Token (%s, '%s', %d:%d)%n",
-                    name, text, line, col);
+            System.out.printf("Token (%s, '%s', %d:%d)%n", name, text, line, col);
         }
-    }
-
-    private static ParseTree buildSymbolTable(String input) {
-
-        CharStream stream = CharStreams.fromString(input);
-        javaMinusMinus2Lexer lexer = new javaMinusMinus2Lexer(stream);
-        CommonTokenStream tokens = new CommonTokenStream(lexer);
-
-        javaMinusMinus2Parser parser = new javaMinusMinus2Parser(tokens);
-
-        parser.removeErrorListeners();
-        parser.addErrorListener(new BaseErrorListener() {
-            @Override
-            public void syntaxError(Recognizer<?, ?> r, Object off,
-                    int line, int col, String msg, RecognitionException e) {
-                errors.add("Syntax error at " + line + ":" + col + " - " + msg);
-            }
-        });
-
-        ParseTree tree = parser.program();
-        CompleteSymbolTableBuilder builder = new CompleteSymbolTableBuilder(globalTable);
-
-        globalTable.disableErrorReporting();
-
-        ParseTreeWalker walker = new ParseTreeWalker();
-        walker.walk(builder, tree);
-
-        return tree;
     }
 
     private static void printScopeStructure(SymbolTable table, String path) {
 
         System.out.printf("Scope: %s (full: %s)%n", table.getScopeName(), path);
 
-        for (SymbolInfo info : table.getSymbolsList()) {
-
+        for (SymbolInfo info : table.getAllSymbols()) {
             switch (info.symbolType) {
                 case CLASS:
                     System.out.printf("[class] %s (scope: %s)%n", info.name, path);
                     break;
-
                 case METHOD:
                     System.out.printf("[method] %s -> %s (scope: %s)%n",
                             info.name, info.dataType, path);
@@ -180,27 +171,26 @@ public class Main {
                             System.out.printf("   %s: %s%n", p.name, p.type);
                     }
                     break;
-
                 case PARAMETER:
                     System.out.printf("[parameter] %s: %s (scope: %s)%n",
                             info.name, info.dataType, path);
                     break;
-                    
                 default:
                     break;
             }
         }
 
         for (SymbolTable child : table.getChildScopes()) {
-            String childPath = path.equals("GLOBAL") ? child.getScopeName() : path + "::" + child.getScopeName();
+            String childPath = path.equals("GLOBAL")
+                    ? child.getScopeName()
+                    : path + "::" + child.getScopeName();
             printScopeStructure(child, childPath);
         }
     }
 
     private static void printFlatSymbolTable(SymbolTable table, int[] idx, String path) {
 
-        for (SymbolInfo info : table.getSymbolsList()) {
-
+        for (SymbolInfo info : table.getAllSymbols()) {
             if (info.symbolType == SymbolInfo.SymbolType.IMPORT)
                 continue;
 
@@ -213,7 +203,9 @@ public class Main {
         }
 
         for (SymbolTable child : table.getChildScopes()) {
-            String childPath = path.equals("GLOBAL") ? child.getScopeName() : path + "::" + child.getScopeName();
+            String childPath = path.equals("GLOBAL")
+                    ? child.getScopeName()
+                    : path + "::" + child.getScopeName();
             printFlatSymbolTable(child, idx, childPath);
         }
     }
