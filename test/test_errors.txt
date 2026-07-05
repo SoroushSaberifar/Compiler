@@ -1,27 +1,58 @@
-import std.io;
+import UndefinedClass;
+
+class Main {
+    public static void main(String[] args) {
+
+        ErrorTest obj;
+        obj = new ErrorTest();
+        int r;
+
+        r = obj.compute();
+
+        r = obj.compute("hello", 'c');
+
+        r = obj.compute('a', 5);
+
+        z = 20;
+
+        if (r > 0) {
+            int inner;
+            inner = 1;
+        }
+        inner = 2;
+
+        int[] arr;
+        arr = new int[5];
+        arr[-3] = 1;
+        arr[10] = 2;
+        arr[true] = 3;
+    }
+}
 
 class ErrorTest {
-    int value;
 
-    void process(int x) {
-        // خطای معنایی ۱: تعریف مجدد متغیر در یک Scope
-        int x; 
-        
-        // خطای معنایی ۲: استفاده از متغیر تعریف‌نشده
-        z = 20; 
-        
-        // خطای معنایی ۳: عدم تطابق نوع در انتساب (رشته به int)
-        value = "string_value"; 
-        
+    private int value;
+    private int value;
+
+    public int compute(int a, char c) {
+        int a;
+
         int temp;
         temp = 5;
+        int temp;
+
+        value = "wrong_type";
+
+        return "invalid_return";
     }
 
-    void run() {
-        // خطای معنایی ۴: فراخوانی متد با تعداد پارامترهای نادرست
-        process(); 
-        
-        // خطای معنایی ۵: فراخوانی متد با نوع پارامتر اشتباه (فرستادن رشته به جای int)
-        process("hello"); 
+    public boolean check(int k) {
+        return k + 1;
     }
+}
+
+class A extends B {
+}
+
+class B extends A {
 }

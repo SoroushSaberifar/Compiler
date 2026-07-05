@@ -1,15 +1,97 @@
-import std.io;
+import Calculator;
+
+class Main {
+    public static void main(String[] args) {
+
+        int x;
+        int y = 10;
+        x = 5;
+
+        boolean flag;
+        flag = true;
+
+        char grade;
+        grade = 'A';
+
+        String msg;
+        msg = "hello world";
+
+        Calculator calc;
+        calc = new Calculator(0);
+
+        Calculator empty;
+        empty = null;
+
+        int r;
+        r = calc.add(x, y);
+
+        int m;
+        m = calc.multiply(r, 2);
+
+        int[] arr;
+        arr = new int[5];
+        arr[0] = r;
+        arr[1] = arr[0] * 2;
+
+        int[] nums = {1, 2, 3};
+
+        int n;
+        n = arr.length;
+
+        for (int i = 0; i < n; i = i + 1) {
+            if (arr[i] % 2 == 0) {
+                continue;
+            }
+            if (arr[i] > 100) {
+                break;
+            }
+            arr[i] = arr[i] + 1;
+        }
+
+        int p;
+        p = 2 ** 3;
+        p = p / 2;
+        p = p - 1;
+
+        if (flag && (x < y) || !(r >= 15)) {
+            print("condition met");
+        } else {
+            print(msg);
+        }
+
+        if (x <= y) {
+            print(grade);
+        }
+
+        read(x);
+        while (x != 0) {
+            x = x - 1;
+        }
+
+        print(p);
+    }
+}
 
 class Calculator {
-    int result;
 
-    int add(int a, int b) {
+    private int result;
+    public int counter;
+    protected int limit;
+    internal int flagCount;
+
+    Calculator(int start) {
+        result = start;
+        counter = 0;
+    }
+
+    public int add(int a, int b) {
         int sum;
         sum = a + b;
+        result = sum;
         return sum;
     }
 
-    int multiply(int a, int b) {
+    protected int multiply(int a, int b) {
         int temp;
         temp = 0;
         int i;
@@ -20,27 +102,46 @@ class Calculator {
         }
         return temp;
     }
+
+    public int getResult() {
+        return result;
+    }
+
+    public int twice() {
+        int d;
+        d = this.getResult() + this.getResult();
+        return d;
+    }
 }
 
-class MainProgram {
-    void main() {
-        Calculator calc;
-        calc = new Calculator();
-        
-        int x;
-        int y;
-        x = 5;
-        y = 10;
-        
-        int r;
-        r = calc.add(x, y);
-        
-        if (r > 10) {
-            int doubleResult;
-            doubleResult = calc.multiply(r, 2);
-        } else {
-            int zero;
-            zero = 0;
-        }
+abstract class Shape {
+    protected int side;
+
+    public void setSide(int s) {
+        side = s;
     }
+
+    public abstract int area(int scale);
+}
+
+class Square extends Shape {
+
+    @Override
+    public int area(int scale) {
+        int a;
+        a = side * side * scale;
+        return a;
+    }
+}
+
+class Logger implements Printable {
+
+    public void show(int code) {
+        print(code);
+    }
+}
+
+interface Printable {
+    int MAX = 100;
+    void show(int code);
 }
