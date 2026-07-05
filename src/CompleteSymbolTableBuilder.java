@@ -7,16 +7,15 @@ import grammar.javaMinusMinus2BaseListener;
 
 public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
+    // اصلاح #۱: فقط یک جدول سراسری — همان که از بیرون داده می‌شود
     private final SymbolTable globalScope;
     private SymbolTable currentScope;
-    private final SymbolTable globalTable;
     private final Stack<SymbolTable> scopeStack = new Stack<>();
 
     public CompleteSymbolTableBuilder(SymbolTable globalTable) {
-        SymbolTable.resetScopeIds();
-        globalScope = new SymbolTable(SymbolTable.ScopeType.GLOBAL, "global", null);
-        this.globalTable = globalTable;
-        currentScope = globalScope;
+        // نکته: resetScopeIds باید در Main و «قبل از» ساخت globalTable صدا زده شود
+        this.globalScope = globalTable;
+        this.currentScope = globalTable;
     }
 
     public SymbolTable getGlobalScope() {
@@ -41,9 +40,14 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         }
     }
 
+    // نکته جزئی #۲: پوشش هر دو حالتِ توکن واحد و دو-توکنی
     private boolean hasOverrideAnnotation(ParserRuleContext ctx) {
-        return ctx.getChildCount() > 0
-                && "@Override".equals(ctx.getChild(0).getText());
+        if (ctx.getChildCount() == 0)
+            return false;
+        String first = ctx.getChild(0).getText();
+        return "@Override".equals(first)
+                || ("@".equals(first) && ctx.getChildCount() > 1
+                        && "Override".equals(ctx.getChild(1).getText()));
     }
 
     private SymbolInfo.AccessModifier getAccessModifier(
@@ -92,6 +96,31 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
             pInfo.isInitialized = true;
             setLocationInfo(pInfo, p.Identifier().getSymbol());
             currentScope.Insert(pname, pInfo);
+        }
+    }
+
+    /**
+     * اصلاح #۴: استخراج اندازه‌ی آرایه از مقدار اولیه
+     * پشتیبانی از «new T[n]» و آرایه‌لیترال «{a, b, c}»
+     * (لازم برای چک #۶ فاز ۲: اندیسِ ثابتِ بزرگ‌تر از size)
+     */
+    private void extractArraySize(SymbolInfo info, String initText) {
+        if (initText == null || !info.isArrayType())
+            return;
+        String txt = initText.trim();
+        if (txt.startsWith("new")) {
+            int lb = txt.indexOf('[');
+            int rb = txt.indexOf(']');
+            if (lb >= 0 && rb > lb + 1) {
+                try {
+                    info.arraySize = Integer.parseInt(txt.substring(lb + 1, rb).trim());
+                } catch (NumberFormatException ignored) {
+                    // اندازه‌ی غیرثابت؛ چک ایستا ممکن نیست
+                }
+            }
+        } else if (txt.startsWith("{") && txt.endsWith("}")) {
+            String inner = txt.substring(1, txt.length() - 1).trim();
+            info.arraySize = inner.isEmpty() ? 0 : inner.split(",").length;
         }
     }
 
@@ -147,8 +176,8 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         String className = ctx.Identifier(0).getText();
 
         SymbolInfo info = new SymbolInfo(className, SymbolInfo.SymbolType.CLASS);
-        info.isAbstract = ctx.getStart().getText().equals("abstract")
-                || ctx.getText().startsWith("abstract");
+        // نکته جزئی #۱: توکن آغازین به‌تنهایی کافی است
+        info.isAbstract = "abstract".equals(ctx.getStart().getText());
 
         boolean hasExtends = false;
         boolean hasImplements = false;
@@ -170,7 +199,8 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
         if (hasImplements) {
             for (int k = implementsStartIndex; k < ctx.Identifier().size(); k++) {
-                info.implementedInterfaces.add(ctx.Identifier(k).getText());
+                // اصلاح #۲: فیلد implementedInterfaces حذف شده است
+                info.interfaces.add(ctx.Identifier(k).getText());
             }
         }
 
@@ -223,6 +253,7 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
         if (ctx.expression() != null) {
             info.initialValue = ctx.expression().getText();
+            extractArraySize(info, info.initialValue);
         }
 
         setLocationInfo(info, ctx.Identifier().getSymbol());
@@ -251,6 +282,7 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         info.dataType = typeText(v.type());
         info.accessModifier = getAccessModifier(v.accessModifier());
 
+        // فیلدها در این گرامر مقداردهی اولیه ندارند
         info.isInitialized = false;
 
         setLocationInfo(info, v.Identifier().getSymbol());
@@ -322,6 +354,8 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
             info.isInitialized = true;
             if (ctx.expression() != null) {
                 info.initialValue = ctx.expression().getText();
+                // اصلاح #۴: لازم برای تشخیص اندیس خارج از محدوده در تست ۲
+                extractArraySize(info, info.initialValue);
             }
         } else {
             info.isInitialized = false;
@@ -342,14 +376,20 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         popScope();
     }
 
+    // اصلاح #۵: نام قاعده در گرامر «forStmt» است، نه «forStatement»
     @Override
-    public void enterForStatement(javaMinusMinus2Parser.ForStatementContext ctx) {
+    public void enterForStmt(javaMinusMinus2Parser.ForStmtContext ctx) {
         pushScope(SymbolTable.ScopeType.BLOCK,
                 "for@" + ctx.getStart().getLine());
     }
 
     @Override
-    public void exitForStatement(javaMinusMinus2Parser.ForStatementContext ctx) {
+    public void exitForStmt(javaMinusMinus2Parser.ForStmtContext ctx) {
         popScope();
     }
+
+    // ⚠️ اصلاح #۶ (نیازمند تأیید با پارسر تولیدشده):
+    // اگر مقداردهی اولیه‌ی for در گرامر قاعده‌ی جداگانه‌ای است که از
+    // localDecl استفاده نمی‌کند، باید listener مشابه enterLocalDecl
+    // برای آن اضافه شود تا متغیر حلقه (مثل i) در scope حلقه درج شود.
 }

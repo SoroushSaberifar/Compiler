@@ -85,36 +85,57 @@ public class SymbolTable {
         insert(attributes);
     }
 
+    private SymbolInfo findLocalShadowConflict(String name) {
+        SymbolTable current = this.parentScope;
+        while (current != null
+                && (current.scopeType == ScopeType.BLOCK || current.scopeType == ScopeType.METHOD)) {
+            SymbolInfo found = current.symbols.get(name);
+            if (found != null && (found.symbolType == SymbolInfo.SymbolType.VARIABLE
+                    || found.symbolType == SymbolInfo.SymbolType.PARAMETER)) {
+                return found;
+            }
+            if (current.scopeType == ScopeType.METHOD)
+                break;
+            current = current.parentScope;
+        }
+        return null;
+    }
+
     public void insert(SymbolInfo info) {
         SymbolInfo existing = symbols.get(info.name);
 
         if (existing == null) {
+            if ((info.symbolType == SymbolInfo.SymbolType.VARIABLE)
+                    && findLocalShadowConflict(info.name) != null) {
+                addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber
+                        + " - Redeclaration of variable '" + info.name
+                        + "' (already declared in an enclosing method/block scope)");
+                return;
+            }
             symbols.put(info.name, info);
             return;
         }
 
         if (info.isCallable() && existing.isCallable()) {
-            if (findSameSignature(existing, info) != null) {
+            if (!existing.addOverload(info)) {
                 addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber
                         + " - Duplicate method/constructor: "
                         + info.name + info.getParameterString());
-                return;
             }
-            existing.addOverload(info);
             return;
         }
 
         if (info.isCallable() != existing.isCallable()) {
             addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber
                     + " - Name conflict: '" + info.name + "' cannot be declared as "
-                    + info.symbolType + " because a " + existing.symbolType
+                    + info.getKindString() + " because a " + existing.getKindString()
                     + " with the same name exists in this scope");
             return;
         }
 
         addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber
-                + " - Redeclaration of '" + info.name + "' as " + info.symbolType
-                + " (previous declaration was " + existing.symbolType
+                + " - Redeclaration of '" + info.name + "' as " + info.getKindString()
+                + " (previous declaration was " + existing.getKindString()
                 + " in the same scope)");
     }
 
@@ -167,33 +188,49 @@ public class SymbolTable {
     }
 
     public List<SymbolInfo> lookupMethodOverloads(String name) {
-        SymbolTable searchStart = getCurrentClassScope();
-        if (searchStart == null)
-            searchStart = getEnclosingScope(ScopeType.INTERFACE);
-        if (searchStart == null)
-            searchStart = this;
-
-        SymbolInfo base = searchStart.lookup(name);
-        if (base != null && base.isCallable()) {
-            return base.getAllVersions();
+        SymbolTable classScope = getCurrentClassScope();
+        if (classScope != null) {
+            SymbolInfo base = lookupInClassHierarchy(classScope.scopeName, name);
+            if (base != null && base.isCallable())
+                return base.getAllVersions();
         }
+        SymbolTable ifaceScope = getEnclosingScope(ScopeType.INTERFACE);
+        if (ifaceScope != null) {
+            SymbolInfo base = ifaceScope.lookupCurrentScopeOnly(name);
+            if (base != null && base.isCallable())
+                return base.getAllVersions();
+        }
+        SymbolInfo base = lookup(name);
+        if (base != null && base.isCallable())
+            return base.getAllVersions();
         return new ArrayList<>();
     }
 
-    public SymbolInfo lookupInClassHierarchy(String className, String memberName) {
-        Set<String> visited = new HashSet<>();
-        String current = className;
-        while (current != null && visited.add(current)) {
-            SymbolTable typeScope = findTypeScope(current);
-            if (typeScope == null)
-                return null;
-            SymbolInfo member = typeScope.lookupCurrentScopeOnly(memberName);
-            if (member != null)
-                return member;
-            SymbolInfo classInfo = getRootScope().lookupCurrentScopeOnly(current);
-            current = (classInfo != null) ? classInfo.parentClass : null;
+    private SymbolInfo lookupInHierarchyRec(String typeName, String memberName, Set<String> visited) {
+        if (typeName == null || !visited.add(typeName))
+            return null;
+        SymbolTable typeScope = findTypeScope(typeName);
+        if (typeScope == null)
+            return null;
+        SymbolInfo member = typeScope.lookupCurrentScopeOnly(memberName);
+        if (member != null)
+            return member;
+        SymbolInfo typeInfo = getRootScope().lookupCurrentScopeOnly(typeName);
+        if (typeInfo == null)
+            return null;
+        SymbolInfo fromParent = lookupInHierarchyRec(typeInfo.parentClass, memberName, visited);
+        if (fromParent != null)
+            return fromParent;
+        for (String iface : typeInfo.interfaces) {
+            SymbolInfo fromIface = lookupInHierarchyRec(iface, memberName, visited);
+            if (fromIface != null)
+                return fromIface;
         }
         return null;
+    }
+
+    public SymbolInfo lookupInClassHierarchy(String className, String memberName) {
+        return lookupInHierarchyRec(className, memberName, new HashSet<>());
     }
 
     public SymbolTable getParent() {
@@ -403,7 +440,7 @@ public class SymbolTable {
                 type = "N/A";
             }
 
-            String initVal = sym.initialValue != null ? sym.initialValue : "$N/A$";
+            String initVal = sym.initialValue != null ? sym.initialValue : "N/A";
             String scopePath = sym.scope != null ? sym.scope : "GLOBAL";
 
             System.out.printf("%-5d | %-20s | %-15s | %-15s | %-25s | %-15s%n",

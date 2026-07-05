@@ -6,6 +6,10 @@ public class TypeChecker {
     private final List<String> errors = new ArrayList<>();
     private final SymbolTable globalTable;
 
+    // اصلاح #۳: نماد آخرین شناسه‌ی resolve شده در primaryExpression
+    // (برای دسترسی به arraySize هنگام چک کران آرایه)
+    private SymbolInfo lastPrimarySymbol = null;
+
     public TypeChecker(SymbolTable globalTable) {
         this.globalTable = globalTable;
     }
@@ -31,12 +35,16 @@ public class TypeChecker {
         if (ctx instanceof javaMinusMinus2Parser.ArrayAccessExprContext) {
             javaMinusMinus2Parser.ArrayAccessExprContext c = (javaMinusMinus2Parser.ArrayAccessExprContext) ctx;
 
+            // اصلاح #۳: capture نماد آرایه «قبل از» ارزیابی اندیس
+            // (ارزیابی اندیس lastPrimarySymbol را بازنویسی می‌کند)
+            SymbolInfo arraySym = lastPrimarySymbol;
+
             String indexType = getExpressionType(c.expression(), currentScope);
             if (!indexType.equals("int") && !indexType.equals("unknown")) {
                 error(currentScope, ctx,
                         "Array index must be an integer, found: " + indexType);
             } else {
-                checkArrayBounds(c.expression(), currentScope);
+                checkArrayBounds(c.expression(), arraySym, currentScope);
             }
 
             String resultType = "unknown";
@@ -73,57 +81,91 @@ public class TypeChecker {
             return getExpressionPrimeType(c.expressionPrime(), returnType, currentScope);
         }
 
-        if (ctx instanceof javaMinusMinus2Parser.PowExprContext)
-            return arithmetic(leftType, ((javaMinusMinus2Parser.PowExprContext) ctx).primaryExpression(), "^", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.MulExprContext)
-            return arithmetic(leftType, ((javaMinusMinus2Parser.MulExprContext) ctx).primaryExpression(), "*", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.DivExprContext)
-            return arithmetic(leftType, ((javaMinusMinus2Parser.DivExprContext) ctx).primaryExpression(), "/", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.ModExprContext)
-            return arithmetic(leftType, ((javaMinusMinus2Parser.ModExprContext) ctx).primaryExpression(), "%", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.AddExprContext)
-            return arithmetic(leftType, ((javaMinusMinus2Parser.AddExprContext) ctx).primaryExpression(), "+", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.SubExprContext)
-            return arithmetic(leftType, ((javaMinusMinus2Parser.SubExprContext) ctx).primaryExpression(), "-", ctx,
-                    currentScope);
+        // اصلاح #۲: هر عملگر دودویی باید پس از محاسبه‌ی نوع نتیجه،
+        // زنجیره‌ی expressionPrime داخلی خود را هم ادامه دهد؛ وگرنه
+        // در «a + b + c» عملوند سوم هرگز بررسی نمی‌شود.
 
-        if (ctx instanceof javaMinusMinus2Parser.LtExprContext)
-            return relational(leftType, ((javaMinusMinus2Parser.LtExprContext) ctx).primaryExpression(), "<", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.LeExprContext)
-            return relational(leftType, ((javaMinusMinus2Parser.LeExprContext) ctx).primaryExpression(), "<=", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.GtExprContext)
-            return relational(leftType, ((javaMinusMinus2Parser.GtExprContext) ctx).primaryExpression(), ">", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.GeExprContext)
-            return relational(leftType, ((javaMinusMinus2Parser.GeExprContext) ctx).primaryExpression(), ">=", ctx,
-                    currentScope);
+        if (ctx instanceof javaMinusMinus2Parser.PowExprContext) {
+            javaMinusMinus2Parser.PowExprContext c = (javaMinusMinus2Parser.PowExprContext) ctx;
+            String r = arithmetic(leftType, c.primaryExpression(), "^", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.MulExprContext) {
+            javaMinusMinus2Parser.MulExprContext c = (javaMinusMinus2Parser.MulExprContext) ctx;
+            String r = arithmetic(leftType, c.primaryExpression(), "*", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.DivExprContext) {
+            javaMinusMinus2Parser.DivExprContext c = (javaMinusMinus2Parser.DivExprContext) ctx;
+            String r = arithmetic(leftType, c.primaryExpression(), "/", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.ModExprContext) {
+            javaMinusMinus2Parser.ModExprContext c = (javaMinusMinus2Parser.ModExprContext) ctx;
+            String r = arithmetic(leftType, c.primaryExpression(), "%", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.AddExprContext) {
+            javaMinusMinus2Parser.AddExprContext c = (javaMinusMinus2Parser.AddExprContext) ctx;
+            String r = arithmetic(leftType, c.primaryExpression(), "+", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.SubExprContext) {
+            javaMinusMinus2Parser.SubExprContext c = (javaMinusMinus2Parser.SubExprContext) ctx;
+            String r = arithmetic(leftType, c.primaryExpression(), "-", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
 
-        if (ctx instanceof javaMinusMinus2Parser.EqExprContext)
-            return equality(leftType, ((javaMinusMinus2Parser.EqExprContext) ctx).primaryExpression(), "==", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.NeqExprContext)
-            return equality(leftType, ((javaMinusMinus2Parser.NeqExprContext) ctx).primaryExpression(), "!=", ctx,
-                    currentScope);
+        if (ctx instanceof javaMinusMinus2Parser.LtExprContext) {
+            javaMinusMinus2Parser.LtExprContext c = (javaMinusMinus2Parser.LtExprContext) ctx;
+            String r = relational(leftType, c.primaryExpression(), "<", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.LeExprContext) {
+            javaMinusMinus2Parser.LeExprContext c = (javaMinusMinus2Parser.LeExprContext) ctx;
+            String r = relational(leftType, c.primaryExpression(), "<=", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.GtExprContext) {
+            javaMinusMinus2Parser.GtExprContext c = (javaMinusMinus2Parser.GtExprContext) ctx;
+            String r = relational(leftType, c.primaryExpression(), ">", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.GeExprContext) {
+            javaMinusMinus2Parser.GeExprContext c = (javaMinusMinus2Parser.GeExprContext) ctx;
+            String r = relational(leftType, c.primaryExpression(), ">=", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
 
-        if (ctx instanceof javaMinusMinus2Parser.AndExprContext)
-            return logical(leftType, ((javaMinusMinus2Parser.AndExprContext) ctx).primaryExpression(), "&&", ctx,
-                    currentScope);
-        if (ctx instanceof javaMinusMinus2Parser.OrExprContext)
-            return logical(leftType, ((javaMinusMinus2Parser.OrExprContext) ctx).primaryExpression(), "||", ctx,
-                    currentScope);
+        if (ctx instanceof javaMinusMinus2Parser.EqExprContext) {
+            javaMinusMinus2Parser.EqExprContext c = (javaMinusMinus2Parser.EqExprContext) ctx;
+            String r = equality(leftType, c.primaryExpression(), "==", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.NeqExprContext) {
+            javaMinusMinus2Parser.NeqExprContext c = (javaMinusMinus2Parser.NeqExprContext) ctx;
+            String r = equality(leftType, c.primaryExpression(), "!=", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+
+        if (ctx instanceof javaMinusMinus2Parser.AndExprContext) {
+            javaMinusMinus2Parser.AndExprContext c = (javaMinusMinus2Parser.AndExprContext) ctx;
+            String r = logical(leftType, c.primaryExpression(), "&&", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
+        if (ctx instanceof javaMinusMinus2Parser.OrExprContext) {
+            javaMinusMinus2Parser.OrExprContext c = (javaMinusMinus2Parser.OrExprContext) ctx;
+            String r = logical(leftType, c.primaryExpression(), "||", ctx, currentScope);
+            return getExpressionPrimeType(c.expressionPrime(), r, currentScope);
+        }
 
         return leftType;
     }
 
     public String getPrimaryExpressionType(javaMinusMinus2Parser.PrimaryExpressionContext ctx,
             SymbolTable currentScope) {
+        lastPrimarySymbol = null; // اصلاح #۳
+
         if (ctx == null)
             return "unknown";
 
@@ -150,6 +192,13 @@ public class TypeChecker {
 
             SymbolInfo sym = currentScope.Lookup(name);
             if (sym != null) {
+                lastPrimarySymbol = sym; // اصلاح #۳
+
+                // اصلاح #۶: گیرنده‌ی استاتیک (Helper.help())
+                if (sym.symbolType == SymbolInfo.SymbolType.CLASS
+                        || sym.symbolType == SymbolInfo.SymbolType.INTERFACE) {
+                    return sym.name;
+                }
                 if (sym.symbolType == SymbolInfo.SymbolType.VARIABLE && !sym.isInitialized) {
                     error(currentScope, ctx, "Variable '" + name + "' may be used before initialization");
                 }
@@ -222,6 +271,12 @@ public class TypeChecker {
             javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
             String op, ParserRuleContext ctx, SymbolTable currentScope) {
         String rightType = getPrimaryExpressionType(rightCtx, currentScope);
+
+        // اصلاح #۷: الحاق رشته با «+» مجاز است
+        if (op.equals("+") && (leftType.equals("String") || rightType.equals("String"))) {
+            return "String";
+        }
+
         if (!isNumeric(leftType) || !isNumeric(rightType)) {
             error(currentScope, ctx, String.format(
                     "Operator '%s' requires int operands, found: %s and %s",
@@ -297,18 +352,37 @@ public class TypeChecker {
             return "unknown";
         }
 
+        // اصلاح #۵: BFS روی والد «و» اینترفیس‌ها (نه فقط زنجیره‌ی وراثت)
         Set<String> visited = new HashSet<>();
-        SymbolTable search = classScope;
-        while (search != null && visited.add(search.getScopeName())) {
+        Queue<SymbolTable> queue = new LinkedList<>();
+        queue.add(classScope);
+
+        while (!queue.isEmpty()) {
+            SymbolTable search = queue.poll();
+            if (!visited.add(search.getScopeName()))
+                continue;
+
             for (SymbolInfo m : search.lookupMethodOverloads(methodName)) {
                 if (matchesArguments(m, argTypes, currentScope)) {
                     return (m.dataType != null) ? m.dataType : "void";
                 }
             }
-            SymbolInfo classInfo = currentScope.Lookup(search.getScopeName());
-            search = (classInfo != null && classInfo.parentClass != null)
-                    ? currentScope.findTypeScope(classInfo.parentClass)
-                    : null;
+
+            SymbolInfo typeInfo = currentScope.Lookup(search.getScopeName());
+            if (typeInfo != null) {
+                if (typeInfo.parentClass != null) {
+                    SymbolTable p = currentScope.findTypeScope(typeInfo.parentClass);
+                    if (p != null)
+                        queue.add(p);
+                }
+                if (typeInfo.interfaces != null) {
+                    for (String iface : typeInfo.interfaces) {
+                        SymbolTable is = currentScope.findTypeScope(iface);
+                        if (is != null)
+                            queue.add(is);
+                    }
+                }
+            }
         }
 
         error(currentScope, ctx, String.format(
@@ -388,8 +462,9 @@ public class TypeChecker {
                 if (info.parentClass != null) {
                     queue.add(info.parentClass);
                 }
-                if (info.implementedInterfaces != null) {
-                    queue.addAll(info.implementedInterfaces);
+                // اصلاح #۱: فیلد implementedInterfaces حذف شده است
+                if (info.interfaces != null) {
+                    queue.addAll(info.interfaces);
                 }
             }
         }
@@ -397,25 +472,61 @@ public class TypeChecker {
         return false;
     }
 
-    private void checkArrayBounds(javaMinusMinus2Parser.ExpressionContext indexCtx,
-            SymbolTable currentScope) {
+    /**
+     * اصلاح #۳: استخراج اندیس ثابت با پوشش عدد منفی
+     * (که به‌صورت UnaryMinusExpr(IntLit) پارس می‌شود)
+     * برمی‌گرداند null اگر اندیس، ثابت عددی خالص نباشد.
+     */
+    private Integer extractConstantIndex(javaMinusMinus2Parser.ExpressionContext indexCtx) {
         if (indexCtx == null)
-            return;
-        if (indexCtx.primaryExpression() instanceof javaMinusMinus2Parser.IntLitExprContext) {
-            try {
-                int v = Integer.parseInt(indexCtx.primaryExpression().getText().trim());
-                if (v < 0) {
-                    error(currentScope, indexCtx, "Array index cannot be negative: " + v);
-                }
-            } catch (NumberFormatException ignored) {
+            return null;
+        // فقط عبارت‌های بدون دنباله (literal خالص)
+        if (indexCtx.expressionPrime() != null
+                && !(indexCtx.expressionPrime() instanceof javaMinusMinus2Parser.EmptyExprTailContext))
+            return null;
+
+        javaMinusMinus2Parser.PrimaryExpressionContext p = indexCtx.primaryExpression();
+        try {
+            if (p instanceof javaMinusMinus2Parser.IntLitExprContext) {
+                return Integer.parseInt(p.getText().trim());
             }
+            if (p instanceof javaMinusMinus2Parser.UnaryMinusExprContext) {
+                javaMinusMinus2Parser.PrimaryExpressionContext inner = ((javaMinusMinus2Parser.UnaryMinusExprContext) p)
+                        .primaryExpression();
+                if (inner instanceof javaMinusMinus2Parser.IntLitExprContext) {
+                    return -Integer.parseInt(inner.getText().trim());
+                }
+            }
+        } catch (NumberFormatException ignored) {
+        }
+        return null;
+    }
+
+    private void checkArrayBounds(javaMinusMinus2Parser.ExpressionContext indexCtx,
+            SymbolInfo arraySym, SymbolTable currentScope) {
+        Integer v = extractConstantIndex(indexCtx);
+        if (v == null)
+            return;
+
+        if (v < 0) {
+            error(currentScope, indexCtx, "Array index cannot be negative: " + v);
+            return;
+        }
+
+        // اصلاح #۳ (چک #۶ فاز ۲): اندیس ثابت خارج از محدوده‌ی size
+        if (arraySym != null && arraySym.arraySize > 0 && v >= arraySym.arraySize) {
+            error(currentScope, indexCtx, String.format(
+                    "Array index %d is out of bounds for array '%s' of size %d",
+                    v, arraySym.name, arraySym.arraySize));
         }
     }
 
     private void error(SymbolTable scope, ParserRuleContext ctx, String message) {
-        scope.addSemanticError(String.format("Line %d:%d - %s",
+        String formatted = String.format("Line %d:%d - %s",
                 ctx.getStart().getLine(),
                 ctx.getStart().getCharPositionInLine(),
-                message));
+                message);
+        errors.add(formatted); // اصلاح #۴
+        scope.addSemanticError(formatted);
     }
 }

@@ -29,6 +29,10 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
         validateImports();
     }
 
+    public List<String> getTypeCheckerErrors() {
+        return typeChecker.getErrors();
+    }
+
     private void pushChildScope() {
         List<SymbolTable> children = currentScope.getChildScopes();
         int idx = childIndexStack.pop();
@@ -127,18 +131,17 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
     public void enterForStatement(javaMinusMinus2Parser.ForStatementContext ctx) {
         pushChildScope();
         loopDepth++;
-        if (ctx.forStmt().expression() != null) {
-            String condType = typeChecker.getExpressionType(ctx.forStmt().expression(), currentScope);
-            if (!condType.equals("boolean") && !condType.equals("unknown")) {
-                addError("For condition must be boolean, found '" + condType + "'",
-                        ctx.getStart());
-            }
-        }
     }
 
     @Override
     public void exitForStatement(javaMinusMinus2Parser.ForStatementContext ctx) {
         loopDepth--;
+        if (ctx.forStmt().expression() != null) {
+            String condType = typeChecker.getExpressionType(ctx.forStmt().expression(), currentScope);
+            if (!condType.equals("boolean") && !condType.equals("unknown")) {
+                addError("For condition must be boolean, found '" + condType + "'", ctx.getStart());
+            }
+        }
         popScope();
     }
 
@@ -185,23 +188,25 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
         String designatorText = ctx.designator().getText();
         String baseName = baseIdentifier(designatorText);
 
-        SymbolInfo lhs = currentScope.Lookup(baseName);
-        if (lhs == null) {
-            addError("Undeclared variable '" + baseName + "'", ctx.getStart());
-            return;
+        if (baseName.equals("this")) {
+            String field = baseIdentifier(designatorText.substring("this.".length()));
+            SymbolInfo lhs = currentScope.Lookup(field);
+            if (lhs == null) {
+                addError("Undeclared field '" + field + "'", ctx.getStart());
+                return;
+            }
+            String lhsType = resolveDesignatorType(designatorText, lhs);
+            String rhsType = typeChecker.getExpressionType(ctx.expression(), currentScope);
+
+            if (!rhsType.equals("unknown")
+                    && !typeChecker.isTypeCompatible(lhsType, rhsType, currentScope)) {
+                addError("Type mismatch in assignment: cannot assign '" + rhsType
+                        + "' to '" + lhsType + "' (variable '" + baseName + "')",
+                        ctx.getStart());
+            }
+
+            lhs.isInitialized = true;
         }
-
-        String lhsType = resolveDesignatorType(designatorText, lhs);
-        String rhsType = typeChecker.getExpressionType(ctx.expression(), currentScope);
-
-        if (!rhsType.equals("unknown")
-                && !typeChecker.isTypeCompatible(lhsType, rhsType, currentScope)) {
-            addError("Type mismatch in assignment: cannot assign '" + rhsType
-                    + "' to '" + lhsType + "' (variable '" + baseName + "')",
-                    ctx.getStart());
-        }
-
-        lhs.isInitialized = true;
     }
 
     @Override
@@ -242,15 +247,6 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
         SymbolInfo sym = currentScope.Lookup(ctx.Identifier().getText());
         if (sym != null)
             sym.isInitialized = true;
-    }
-
-    @Override
-    public void enterExprOnlyStmt(javaMinusMinus2Parser.ExprOnlyStmtContext ctx) {
-        if (ctx.exprStmt().assignment() != null &&
-                ctx.exprStmt().assignment().expression() != null) {
-
-            typeChecker.getExpressionType(ctx.exprStmt().assignment().expression(), currentScope);
-        }
     }
 
     @Override
@@ -303,19 +299,29 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
     }
 
     private void checkInheritanceCycles() {
+        Set<String> reported = new HashSet<>();
         for (SymbolInfo info : globalTable.getAllSymbols()) {
-            if (info.symbolType != SymbolInfo.SymbolType.CLASS)
+            if (info.symbolType != SymbolInfo.SymbolType.CLASS
+                    && info.symbolType != SymbolInfo.SymbolType.INTERFACE)
+                continue;
+            if (reported.contains(info.name))
                 continue;
 
-            Set<String> visited = new HashSet<>();
+            Map<String, Integer> order = new HashMap<>();
+            List<String> path = new ArrayList<>();
             String current = info.name;
-            while (current != null) {
-                if (!visited.add(current)) {
-                    addError("Inheritance cycle detected involving class '"
-                            + info.name + "'", null);
-                    break;
-                }
+            while (current != null && !order.containsKey(current)
+                    && !reported.contains(current)) {
+                order.put(current, path.size());
+                path.add(current);
                 current = getParentOf(current);
+            }
+            if (current != null && order.containsKey(current)) {
+                // فقط اعضای واقعی دور، از اولین وقوعِ current به بعد
+                List<String> cycle = path.subList(order.get(current), path.size());
+                reported.addAll(cycle);
+                addError("Inheritance cycle detected: "
+                        + String.join(" -> ", cycle) + " -> " + current, null);
             }
         }
     }
@@ -325,6 +331,11 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
         return (cls != null) ? cls.parentClass : null;
     }
 
+    private String simpleName(String qualified) {
+        int dot = qualified.lastIndexOf('.');
+        return (dot >= 0) ? qualified.substring(dot + 1) : qualified;
+    }
+
     private void validateImports() {
         Set<String> seen = new HashSet<>();
         for (SymbolInfo info : globalTable.getAllSymbols()) {
@@ -332,6 +343,14 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
                 continue;
             if (!seen.add(info.name)) {
                 addError("Duplicate import '" + info.name + "'", null);
+            }
+            // چک #۷: کلاس ایمپورت‌شده باید در جدول نماد تعریف شده باشد
+            SymbolInfo target = globalTable.Lookup(simpleName(info.name));
+            boolean defined = target != null
+                    && (target.symbolType == SymbolInfo.SymbolType.CLASS
+                            || target.symbolType == SymbolInfo.SymbolType.INTERFACE);
+            if (!defined) {
+                addError("Import of undefined class '" + info.name + "'", null);
             }
         }
     }

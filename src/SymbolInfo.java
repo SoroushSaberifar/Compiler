@@ -37,7 +37,6 @@ public class SymbolInfo {
     public String initialValue;
     public String scope;
     public boolean isInitialized = false;
-    public List<String> implementedInterfaces = new ArrayList<>();
     public int lineNumber = -1;
     public int columnNumber = -1;
     public List<ParameterInfo> parameters = new ArrayList<>();
@@ -81,7 +80,7 @@ public class SymbolInfo {
 
     public String getElementType() {
         if (!isArrayType())
-            return dataType;
+            return null;
         String t = normalizeType(dataType);
         return t.substring(0, t.length() - 2);
     }
@@ -128,14 +127,17 @@ public class SymbolInfo {
         return true;
     }
 
-    public void addOverload(SymbolInfo info) {
+    public boolean addOverload(SymbolInfo info) {
+        if (this.sameSignature(info))
+            return false;
         if (overloads == null)
             overloads = new ArrayList<>();
         for (SymbolInfo ov : overloads) {
             if (ov.sameSignature(info))
-                return;
+                return false;
         }
         overloads.add(info);
+        return true;
     }
 
     public List<SymbolInfo> getAllVersions() {
@@ -178,7 +180,7 @@ public class SymbolInfo {
 
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();
-        sb.append(symbolType).append(": ").append(name);
+        sb.append(getKindString()).append(": ").append(name);
 
         if (isCallable()) {
             sb.append(getParameterString());
