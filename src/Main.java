@@ -31,9 +31,6 @@ public class Main {
             return;
         }
 
-        // ==================== LEXICAL ANALYSIS ====================
-        // خواندن مستقیم فایل با UTF-8، مستقل از سیستم‌عامل (جایگزین
-        // readFile/FileReader)
         CharStream stream = CharStreams.fromFileName(args[0]);
         javaMinusMinus2Lexer lexer = new javaMinusMinus2Lexer(stream);
 
@@ -42,7 +39,6 @@ public class Main {
             @Override
             public void syntaxError(Recognizer<?, ?> r, Object off,
                     int line, int col, String msg, RecognitionException e) {
-                // col+1: هماهنگ با شماره‌گذاری یک-مبنای printTokens
                 errors.add("Lexical error at " + line + ":" + (col + 1) + " - " + msg);
             }
         });
@@ -52,15 +48,12 @@ public class Main {
 
         printTokens(lexer, tokens);
 
-        // توقف در خطای لغوی — فاز ۱، ص ۴: «در صورت مشاهده توکن‌های نامعتبر پیغام خطای
-        // مناسبی چاپ شود»
         if (!errors.isEmpty()) {
             System.out.println("\n===== LEXICAL ERRORS =====");
             errors.forEach(System.out::println);
             return;
         }
 
-        // ==================== SYNTAX ANALYSIS ====================
         javaMinusMinus2Parser parser = new javaMinusMinus2Parser(tokens);
 
         parser.removeErrorListeners();
@@ -74,7 +67,6 @@ public class Main {
 
         ParseTree tree = parser.program();
 
-        // دفاع دوم: شمارنده داخلی ANTLR هم بررسی می‌شود
         if (!errors.isEmpty() || parser.getNumberOfSyntaxErrors() > 0) {
             System.out.println("\n===== SYNTAX ERRORS =====");
             errors.forEach(System.out::println);
@@ -83,14 +75,12 @@ public class Main {
 
         ParseTreeWalker walker = new ParseTreeWalker();
 
-        // ==================== PHASE 1: SYMBOL TABLE ====================
         SymbolTable globalTable = new SymbolTable(SymbolTable.ScopeType.GLOBAL, "GLOBAL", null);
         globalTable.enableErrorReporting();
 
         CompleteSymbolTableBuilder builder = new CompleteSymbolTableBuilder(globalTable);
         walker.walk(builder, tree);
 
-        // خروجی فاز ۱ همین‌جا و قبل از اجرای فاز ۲ چاپ می‌شود (جداسازی واقعی فازها)
         System.out.println("\n================ PHASE 1: SYMBOL TABLE ================");
 
         System.out.println("\nSymbol Table Scope Structure");
@@ -102,21 +92,18 @@ public class Main {
         System.out.println("-".repeat(85));
         printFlatSymbolTable(globalTable, new int[] { 0 }, "GLOBAL");
 
-        // ==================== PHASE 2: SEMANTIC ANALYSIS ====================
         System.out.println("\n================ PHASE 2: SEMANTIC ANALYSIS ================");
 
         SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(globalTable);
         walker.walk(semanticAnalyzer, tree);
 
-        // جمع‌آوری خطاهای معنایی از هر «سه» منبع
-        // LinkedHashSet: حفظ ترتیب کشف + حذف پیام‌های تکراری
         Set<String> semanticErrors = new LinkedHashSet<>();
 
         if (globalTable.hasSemanticErrors())
-            semanticErrors.addAll(globalTable.getSemanticErrors()); // خطاهای تعریف تکراری و... از فاز ساخت جدول
+            semanticErrors.addAll(globalTable.getSemanticErrors());
 
-        semanticErrors.addAll(semanticAnalyzer.getErrors()); // خطاهای دسترسی، ارث‌بری، import و...
-        semanticErrors.addAll(semanticAnalyzer.getTypeCheckerErrors()); // ❗ خطاهای نوع که قبلاً گم می‌شدند
+        semanticErrors.addAll(semanticAnalyzer.getErrors());
+        semanticErrors.addAll(semanticAnalyzer.getTypeCheckerErrors());
 
         if (!semanticErrors.isEmpty()) {
             System.out.println("\n===== SEMANTIC ERRORS =====");
@@ -126,7 +113,6 @@ public class Main {
         }
     }
 
-    // ==================== TOKEN OUTPUT ====================
     private static void printTokens(javaMinusMinus2Lexer lexer, CommonTokenStream tokens) {
 
         long count = tokens.getTokens().stream()
@@ -159,9 +145,6 @@ public class Main {
                     .replace("\n", "\\n")
                     .replace("\r", "\\r");
 
-            // متن واقعی توکن‌های آکولاد/کروشه حفظ می‌شود
-            // (فاز ۱، ص ۴: «خروجی به صورت خوانا و فرمت شده ارائه شود»)
-
             int line = token.getLine();
             int col = token.getCharPositionInLine() + 1;
 
@@ -169,8 +152,6 @@ public class Main {
         }
     }
 
-    // ==================== PHASE 1 OUTPUT HELPERS ====================
-    // چاپ ساختار درختی Scopeها (فاز ۱، ص ۲: رابطه درختی جداول علائم)
     private static void printScopeStructure(SymbolTable table, String path) {
 
         System.out.printf("Scope: %s (full: %s)%n", table.getScopeName(), path);
@@ -206,8 +187,6 @@ public class Main {
         }
     }
 
-    // جدول تخت با ستون‌های الزامی فاز ۱، ص ۳: نام، نوع شناسه، نوع داده، حوزه، مقدار
-    // اولیه
     private static void printFlatSymbolTable(SymbolTable table, int[] idx, String path) {
 
         for (SymbolInfo info : table.getAllSymbols()) {

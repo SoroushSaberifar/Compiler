@@ -5,11 +5,7 @@
 *.ear
 
 # ANTLR generated files
-grammar/.antlr/
-grammar/*.interp
-grammar/*.tokens
-grammar/*.java
-!grammar/*.g4
+src/grammar/
 
 # Generated sources
 gen/

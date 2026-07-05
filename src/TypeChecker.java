@@ -6,8 +6,6 @@ public class TypeChecker {
     private final List<String> errors = new ArrayList<>();
     private final SymbolTable globalTable;
 
-    // اصلاح #۳: نماد آخرین شناسه‌ی resolve شده در primaryExpression
-    // (برای دسترسی به arraySize هنگام چک کران آرایه)
     private SymbolInfo lastPrimarySymbol = null;
 
     public TypeChecker(SymbolTable globalTable) {
@@ -35,8 +33,6 @@ public class TypeChecker {
         if (ctx instanceof javaMinusMinus2Parser.ArrayAccessExprContext) {
             javaMinusMinus2Parser.ArrayAccessExprContext c = (javaMinusMinus2Parser.ArrayAccessExprContext) ctx;
 
-            // اصلاح #۳: capture نماد آرایه «قبل از» ارزیابی اندیس
-            // (ارزیابی اندیس lastPrimarySymbol را بازنویسی می‌کند)
             SymbolInfo arraySym = lastPrimarySymbol;
 
             String indexType = getExpressionType(c.expression(), currentScope);
@@ -80,10 +76,6 @@ public class TypeChecker {
             String returnType = resolveMethodCall(leftType, methodName, argTypes, c, currentScope);
             return getExpressionPrimeType(c.expressionPrime(), returnType, currentScope);
         }
-
-        // اصلاح #۲: هر عملگر دودویی باید پس از محاسبه‌ی نوع نتیجه،
-        // زنجیره‌ی expressionPrime داخلی خود را هم ادامه دهد؛ وگرنه
-        // در «a + b + c» عملوند سوم هرگز بررسی نمی‌شود.
 
         if (ctx instanceof javaMinusMinus2Parser.PowExprContext) {
             javaMinusMinus2Parser.PowExprContext c = (javaMinusMinus2Parser.PowExprContext) ctx;
@@ -164,7 +156,7 @@ public class TypeChecker {
 
     public String getPrimaryExpressionType(javaMinusMinus2Parser.PrimaryExpressionContext ctx,
             SymbolTable currentScope) {
-        lastPrimarySymbol = null; // اصلاح #۳
+        lastPrimarySymbol = null;
 
         if (ctx == null)
             return "unknown";
@@ -192,9 +184,8 @@ public class TypeChecker {
 
             SymbolInfo sym = currentScope.Lookup(name);
             if (sym != null) {
-                lastPrimarySymbol = sym; // اصلاح #۳
+                lastPrimarySymbol = sym;
 
-                // اصلاح #۶: گیرنده‌ی استاتیک (Helper.help())
                 if (sym.symbolType == SymbolInfo.SymbolType.CLASS
                         || sym.symbolType == SymbolInfo.SymbolType.INTERFACE) {
                     return sym.name;
@@ -272,7 +263,6 @@ public class TypeChecker {
             String op, ParserRuleContext ctx, SymbolTable currentScope) {
         String rightType = getPrimaryExpressionType(rightCtx, currentScope);
 
-        // اصلاح #۷: الحاق رشته با «+» مجاز است
         if (op.equals("+") && (leftType.equals("String") || rightType.equals("String"))) {
             return "String";
         }
@@ -352,7 +342,6 @@ public class TypeChecker {
             return "unknown";
         }
 
-        // اصلاح #۵: BFS روی والد «و» اینترفیس‌ها (نه فقط زنجیره‌ی وراثت)
         Set<String> visited = new HashSet<>();
         Queue<SymbolTable> queue = new LinkedList<>();
         queue.add(classScope);
@@ -462,7 +451,6 @@ public class TypeChecker {
                 if (info.parentClass != null) {
                     queue.add(info.parentClass);
                 }
-                // اصلاح #۱: فیلد implementedInterfaces حذف شده است
                 if (info.interfaces != null) {
                     queue.addAll(info.interfaces);
                 }
@@ -472,15 +460,9 @@ public class TypeChecker {
         return false;
     }
 
-    /**
-     * اصلاح #۳: استخراج اندیس ثابت با پوشش عدد منفی
-     * (که به‌صورت UnaryMinusExpr(IntLit) پارس می‌شود)
-     * برمی‌گرداند null اگر اندیس، ثابت عددی خالص نباشد.
-     */
     private Integer extractConstantIndex(javaMinusMinus2Parser.ExpressionContext indexCtx) {
         if (indexCtx == null)
             return null;
-        // فقط عبارت‌های بدون دنباله (literal خالص)
         if (indexCtx.expressionPrime() != null
                 && !(indexCtx.expressionPrime() instanceof javaMinusMinus2Parser.EmptyExprTailContext))
             return null;
@@ -513,7 +495,6 @@ public class TypeChecker {
             return;
         }
 
-        // اصلاح #۳ (چک #۶ فاز ۲): اندیس ثابت خارج از محدوده‌ی size
         if (arraySym != null && arraySym.arraySize > 0 && v >= arraySym.arraySize) {
             error(currentScope, indexCtx, String.format(
                     "Array index %d is out of bounds for array '%s' of size %d",
@@ -526,7 +507,7 @@ public class TypeChecker {
                 ctx.getStart().getLine(),
                 ctx.getStart().getCharPositionInLine(),
                 message);
-        errors.add(formatted); // اصلاح #۴
+        errors.add(formatted);
         scope.addSemanticError(formatted);
     }
 }

@@ -317,7 +317,6 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
                 current = getParentOf(current);
             }
             if (current != null && order.containsKey(current)) {
-                // فقط اعضای واقعی دور، از اولین وقوعِ current به بعد
                 List<String> cycle = path.subList(order.get(current), path.size());
                 reported.addAll(cycle);
                 addError("Inheritance cycle detected: "
@@ -344,7 +343,6 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
             if (!seen.add(info.name)) {
                 addError("Duplicate import '" + info.name + "'", null);
             }
-            // چک #۷: کلاس ایمپورت‌شده باید در جدول نماد تعریف شده باشد
             SymbolInfo target = globalTable.Lookup(simpleName(info.name));
             boolean defined = target != null
                     && (target.symbolType == SymbolInfo.SymbolType.CLASS
