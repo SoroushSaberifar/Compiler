@@ -209,9 +209,6 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
         SymbolInfo info = new SymbolInfo(name, SymbolInfo.SymbolType.INTERFACE);
 
-        // بخش مربوط به چک کردن تکی یا چندگانه extends حذف شد؛ چون طبق گرامر، interface
-        // ارث‌بری ندارد.
-
         setLocationInfo(info, ctx.Identifier().getSymbol());
         currentScope.Insert(name, info);
 
