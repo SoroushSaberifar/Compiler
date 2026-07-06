@@ -187,24 +187,36 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
     public void enterAssignment(javaMinusMinus2Parser.AssignmentContext ctx) {
         String designatorText = ctx.designator().getText();
         String baseName = baseIdentifier(designatorText);
+        SymbolInfo lhs = null;
+        String lhsType = "unknown";
 
         if (baseName.equals("this")) {
             String field = baseIdentifier(designatorText.substring("this.".length()));
-            SymbolInfo lhs = currentScope.Lookup(field);
+            lhs = currentScope.Lookup(field);
             if (lhs == null) {
                 addError("Undeclared field '" + field + "'", ctx.getStart());
                 return;
             }
-            String lhsType = resolveDesignatorType(designatorText, lhs);
-            String rhsType = typeChecker.getExpressionType(ctx.expression(), currentScope);
-
-            if (!rhsType.equals("unknown")
-                    && !typeChecker.isTypeCompatible(lhsType, rhsType, currentScope)) {
-                addError("Type mismatch in assignment: cannot assign '" + rhsType
-                        + "' to '" + lhsType + "' (variable '" + baseName + "')",
-                        ctx.getStart());
+            lhsType = resolveDesignatorType(designatorText, lhs);
+        } else {
+            lhs = currentScope.Lookup(baseName);
+            if (lhs == null) {
+                addError("Undeclared variable '" + baseName + "'", ctx.getStart());
+                return;
             }
+            lhsType = resolveDesignatorType(designatorText, lhs);
+        }
 
+        String rhsType = typeChecker.getExpressionType(ctx.expression(), currentScope);
+
+        if (!rhsType.equals("unknown")
+                && !typeChecker.isTypeCompatible(lhsType, rhsType, currentScope)) {
+            addError("Type mismatch in assignment: cannot assign '" + rhsType
+                    + "' to '" + lhsType + "' (variable '" + baseName + "')",
+                    ctx.getStart());
+        }
+
+        if (lhs != null) {
             lhs.isInitialized = true;
         }
     }

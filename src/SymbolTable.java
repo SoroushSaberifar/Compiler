@@ -104,6 +104,20 @@ public class SymbolTable {
     public void insert(SymbolInfo info) {
         SymbolInfo existing = symbols.get(info.name);
 
+        if (existing != null) {
+            boolean isCurrentClassOrImport = (info.symbolType == SymbolInfo.SymbolType.CLASS
+                    || info.symbolType == SymbolInfo.SymbolType.IMPORT);
+            boolean isExistingClassOrImport = (existing.symbolType == SymbolInfo.SymbolType.CLASS
+                    || existing.symbolType == SymbolInfo.SymbolType.IMPORT);
+
+            if (isCurrentClassOrImport && isExistingClassOrImport) {
+                addSemanticError("Line " + info.lineNumber + ":" + info.columnNumber
+                        + " - Name conflict: " + info.getKindString() + " '" + info.name
+                        + "' conflicts with an existing " + existing.getKindString() + " in the global scope");
+                return;
+            }
+        }
+
         if (existing == null) {
             if ((info.symbolType == SymbolInfo.SymbolType.VARIABLE)
                     && findLocalShadowConflict(info.name) != null) {

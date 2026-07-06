@@ -74,15 +74,13 @@ public class SymbolInfo {
     }
 
     public boolean isArrayType() {
-        String t = normalizeType(dataType);
-        return t != null && t.endsWith("[]");
+        return dataType != null && dataType.endsWith("[]");
     }
 
     public String getElementType() {
         if (!isArrayType())
             return null;
-        String t = normalizeType(dataType);
-        return t.substring(0, t.length() - 2);
+        return dataType.substring(0, dataType.length() - 2);
     }
 
     public boolean isCallable() {

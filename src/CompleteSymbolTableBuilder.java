@@ -41,10 +41,9 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
     private boolean hasOverrideAnnotation(ParserRuleContext ctx) {
         if (ctx.getChildCount() == 0)
             return false;
-        String first = ctx.getChild(0).getText();
-        return "@Override".equals(first)
-                || ("@".equals(first) && ctx.getChildCount() > 1
-                        && "Override".equals(ctx.getChild(1).getText()));
+
+        String firstToken = ctx.getChild(0).getText();
+        return "@Override".equals(firstToken);
     }
 
     private SymbolInfo.AccessModifier getAccessModifier(
@@ -210,14 +209,8 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
         SymbolInfo info = new SymbolInfo(name, SymbolInfo.SymbolType.INTERFACE);
 
-        for (int i = 0; i < ctx.getChildCount(); i++) {
-            if ("extends".equals(ctx.getChild(i).getText())) {
-                if (i + 1 < ctx.getChildCount()) {
-                    info.parentClass = ctx.getChild(i + 1).getText();
-                }
-                break;
-            }
-        }
+        // بخش مربوط به چک کردن تکی یا چندگانه extends حذف شد؛ چون طبق گرامر، interface
+        // ارث‌بری ندارد.
 
         setLocationInfo(info, ctx.Identifier().getSymbol());
         currentScope.Insert(name, info);
@@ -271,7 +264,7 @@ public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
         info.dataType = typeText(v.type());
         info.accessModifier = getAccessModifier(v.accessModifier());
 
-        info.isInitialized = false;
+        info.isInitialized = true;
 
         setLocationInfo(info, v.Identifier().getSymbol());
         currentScope.Insert(name, info);

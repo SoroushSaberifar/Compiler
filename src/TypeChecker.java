@@ -365,8 +365,8 @@ public class TypeChecker {
                         queue.add(p);
                 }
                 if (typeInfo.interfaces != null) {
-                    for (String iface : typeInfo.interfaces) {
-                        SymbolTable is = currentScope.findTypeScope(iface);
+                    for (String interfaceName : typeInfo.interfaces) {
+                        SymbolTable is = currentScope.findTypeScope(interfaceName);
                         if (is != null)
                             queue.add(is);
                     }

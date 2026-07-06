@@ -6,6 +6,7 @@
 
 # ANTLR generated files
 src/grammar/
+src/.antlr/
 
 # Generated sources
 gen/
