@@ -1,23 +1,16 @@
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.Token;
-
 import java.util.Stack;
 import grammar.javaMinusMinus2Parser;
 import grammar.javaMinusMinus2BaseListener;
 
 public class CompleteSymbolTableBuilder extends javaMinusMinus2BaseListener {
 
-    private final SymbolTable globalScope;
     private SymbolTable currentScope;
     private final Stack<SymbolTable> scopeStack = new Stack<>();
 
     public CompleteSymbolTableBuilder(SymbolTable globalTable) {
-        this.globalScope = globalTable;
         this.currentScope = globalTable;
-    }
-
-    public SymbolTable getGlobalScope() {
-        return globalScope;
     }
 
     private void pushScope(SymbolTable.ScopeType type, String name) {

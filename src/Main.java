@@ -1,9 +1,7 @@
 import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.tree.*;
-
 import java.io.IOException;
 import java.util.*;
-
 import grammar.javaMinusMinus2Lexer;
 import grammar.javaMinusMinus2Parser;
 
@@ -22,95 +20,6 @@ public class Main {
         TOKEN_NAME_MAP.put(";", "SEMICOLON");
         TOKEN_NAME_MAP.put(",", "COMMA");
         TOKEN_NAME_MAP.put(".", "DOT");
-    }
-
-    public static void main(String[] args) throws IOException {
-
-        if (args.length < 1) {
-            System.out.println("Usage: java Main <input-file>");
-            return;
-        }
-
-        CharStream stream = CharStreams.fromFileName(args[0]);
-        javaMinusMinus2Lexer lexer = new javaMinusMinus2Lexer(stream);
-
-        lexer.removeErrorListeners();
-        lexer.addErrorListener(new BaseErrorListener() {
-            @Override
-            public void syntaxError(Recognizer<?, ?> r, Object off,
-                    int line, int col, String msg, RecognitionException e) {
-                errors.add("Lexical error at " + line + ":" + (col + 1) + " - " + msg);
-            }
-        });
-
-        CommonTokenStream tokens = new CommonTokenStream(lexer);
-        tokens.fill();
-
-        printTokens(lexer, tokens);
-
-        if (!errors.isEmpty()) {
-            System.out.println("\n===== LEXICAL ERRORS =====");
-            errors.forEach(System.out::println);
-            return;
-        }
-
-        javaMinusMinus2Parser parser = new javaMinusMinus2Parser(tokens);
-
-        parser.removeErrorListeners();
-        parser.addErrorListener(new BaseErrorListener() {
-            @Override
-            public void syntaxError(Recognizer<?, ?> r, Object off,
-                    int line, int col, String msg, RecognitionException e) {
-                errors.add("Syntax error at " + line + ":" + (col + 1) + " - " + msg);
-            }
-        });
-
-        ParseTree tree = parser.program();
-
-        if (!errors.isEmpty() || parser.getNumberOfSyntaxErrors() > 0) {
-            System.out.println("\n===== SYNTAX ERRORS =====");
-            errors.forEach(System.out::println);
-            return;
-        }
-
-        ParseTreeWalker walker = new ParseTreeWalker();
-
-        SymbolTable globalTable = new SymbolTable(SymbolTable.ScopeType.GLOBAL, "GLOBAL", null);
-        globalTable.enableErrorReporting();
-
-        CompleteSymbolTableBuilder builder = new CompleteSymbolTableBuilder(globalTable);
-        walker.walk(builder, tree);
-
-        System.out.println("\n================ PHASE 1: SYMBOL TABLE ================");
-
-        System.out.println("\nSymbol Table Scope Structure");
-        printScopeStructure(globalTable, "GLOBAL");
-
-        System.out.println("\nSymbol Table");
-        System.out.printf("%-6s %-15s | %-12s | %-10s | %-20s | %-15s%n",
-                "Index", "Name", "Kind", "Type", "Scope", "Initial");
-        System.out.println("-".repeat(85));
-        printFlatSymbolTable(globalTable, new int[] { 0 }, "GLOBAL");
-
-        System.out.println("\n================ PHASE 2: SEMANTIC ANALYSIS ================");
-
-        SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(globalTable);
-        walker.walk(semanticAnalyzer, tree);
-
-        Set<String> semanticErrors = new LinkedHashSet<>();
-
-        if (globalTable.hasSemanticErrors())
-            semanticErrors.addAll(globalTable.getSemanticErrors());
-
-        semanticErrors.addAll(semanticAnalyzer.getErrors());
-        semanticErrors.addAll(semanticAnalyzer.getTypeCheckerErrors());
-
-        if (!semanticErrors.isEmpty()) {
-            System.out.println("\n===== SEMANTIC ERRORS =====");
-            semanticErrors.forEach(System.out::println);
-        } else {
-            System.out.println("\nSemantic Analysis Passed Successfully (No Errors).");
-        }
     }
 
     private static void printTokens(javaMinusMinus2Lexer lexer, CommonTokenStream tokens) {
@@ -208,4 +117,94 @@ public class Main {
             printFlatSymbolTable(child, idx, childPath);
         }
     }
+
+    public static void main(String[] args) throws IOException {
+
+        if (args.length < 1) {
+            System.out.println("Usage: java Main <input-file>");
+            return;
+        }
+
+        CharStream stream = CharStreams.fromFileName(args[0]);
+        javaMinusMinus2Lexer lexer = new javaMinusMinus2Lexer(stream);
+
+        lexer.removeErrorListeners();
+        lexer.addErrorListener(new BaseErrorListener() {
+            @Override
+            public void syntaxError(Recognizer<?, ?> r, Object off,
+                    int line, int col, String msg, RecognitionException e) {
+                errors.add("Lexical error at " + line + ":" + (col + 1) + " - " + msg);
+            }
+        });
+
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        tokens.fill();
+
+        printTokens(lexer, tokens);
+
+        if (!errors.isEmpty()) {
+            System.out.println("\n===== LEXICAL ERRORS =====");
+            errors.forEach(System.out::println);
+            return;
+        }
+
+        javaMinusMinus2Parser parser = new javaMinusMinus2Parser(tokens);
+
+        parser.removeErrorListeners();
+        parser.addErrorListener(new BaseErrorListener() {
+            @Override
+            public void syntaxError(Recognizer<?, ?> r, Object off,
+                    int line, int col, String msg, RecognitionException e) {
+                errors.add("Syntax error at " + line + ":" + (col + 1) + " - " + msg);
+            }
+        });
+
+        ParseTree tree = parser.program();
+
+        if (!errors.isEmpty() || parser.getNumberOfSyntaxErrors() > 0) {
+            System.out.println("\n===== SYNTAX ERRORS =====");
+            errors.forEach(System.out::println);
+            return;
+        }
+
+        ParseTreeWalker walker = new ParseTreeWalker();
+
+        SymbolTable globalTable = new SymbolTable(SymbolTable.ScopeType.GLOBAL, "GLOBAL", null);
+        globalTable.enableErrorReporting();
+
+        CompleteSymbolTableBuilder builder = new CompleteSymbolTableBuilder(globalTable);
+        walker.walk(builder, tree);
+
+        System.out.println("\n================ PHASE 1: SYMBOL TABLE ================");
+
+        System.out.println("\nSymbol Table Scope Structure");
+        printScopeStructure(globalTable, "GLOBAL");
+
+        System.out.println("\nSymbol Table");
+        System.out.printf("%-6s %-15s | %-12s | %-10s | %-20s | %-15s%n",
+                "Index", "Name", "Kind", "Type", "Scope", "Initial");
+        System.out.println("-".repeat(85));
+        printFlatSymbolTable(globalTable, new int[] { 0 }, "GLOBAL");
+
+        System.out.println("\n================ PHASE 2: SEMANTIC ANALYSIS ================");
+
+        SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(globalTable);
+        walker.walk(semanticAnalyzer, tree);
+
+        Set<String> semanticErrors = new LinkedHashSet<>();
+
+        if (globalTable.hasSemanticErrors())
+            semanticErrors.addAll(globalTable.getSemanticErrors());
+
+        semanticErrors.addAll(semanticAnalyzer.getErrors());
+        semanticErrors.addAll(semanticAnalyzer.getTypeCheckerErrors());
+
+        if (!semanticErrors.isEmpty()) {
+            System.out.println("\n===== SEMANTIC ERRORS =====");
+            semanticErrors.forEach(System.out::println);
+        } else {
+            System.out.println("\nSemantic Analysis Passed Successfully (No Errors).");
+        }
+    }
+
 }

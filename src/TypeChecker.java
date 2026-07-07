@@ -5,7 +5,6 @@ import grammar.javaMinusMinus2Parser;
 public class TypeChecker {
     private final List<String> errors = new ArrayList<>();
     private final SymbolTable globalTable;
-
     private SymbolInfo lastPrimarySymbol = null;
 
     public TypeChecker(SymbolTable globalTable) {
@@ -23,6 +22,230 @@ public class TypeChecker {
 
         String leftType = getPrimaryExpressionType(ctx.primaryExpression(), currentScope);
         return getExpressionPrimeType(ctx.expressionPrime(), leftType, currentScope);
+    }
+
+    private void error(SymbolTable scope, ParserRuleContext ctx, String message) {
+        String formatted = String.format("Line %d:%d - %s",
+                ctx.getStart().getLine(),
+                ctx.getStart().getCharPositionInLine(),
+                message);
+        errors.add(formatted);
+        scope.addSemanticError(formatted);
+    }
+
+    private Integer extractConstantIndex(javaMinusMinus2Parser.ExpressionContext indexCtx) {
+        if (indexCtx == null)
+            return null;
+        if (indexCtx.expressionPrime() != null
+                && !(indexCtx.expressionPrime() instanceof javaMinusMinus2Parser.EmptyExprTailContext))
+            return null;
+
+        javaMinusMinus2Parser.PrimaryExpressionContext p = indexCtx.primaryExpression();
+        try {
+            if (p instanceof javaMinusMinus2Parser.IntLitExprContext) {
+                return Integer.parseInt(p.getText().trim());
+            }
+            if (p instanceof javaMinusMinus2Parser.UnaryMinusExprContext) {
+                javaMinusMinus2Parser.PrimaryExpressionContext inner = ((javaMinusMinus2Parser.UnaryMinusExprContext) p)
+                        .primaryExpression();
+                if (inner instanceof javaMinusMinus2Parser.IntLitExprContext) {
+                    return -Integer.parseInt(inner.getText().trim());
+                }
+            }
+        } catch (NumberFormatException ignored) {
+        }
+        return null;
+    }
+
+    private void checkArrayBounds(javaMinusMinus2Parser.ExpressionContext indexCtx,
+            SymbolInfo arraySym, SymbolTable currentScope) {
+        Integer v = extractConstantIndex(indexCtx);
+        if (v == null)
+            return;
+
+        if (v < 0) {
+            error(currentScope, indexCtx, "Array index cannot be negative: " + v);
+            return;
+        }
+
+        if (arraySym != null && arraySym.arraySize > 0 && v >= arraySym.arraySize) {
+            error(currentScope, indexCtx, String.format(
+                    "Array index %d is out of bounds for array '%s' of size %d",
+                    v, arraySym.name, arraySym.arraySize));
+        }
+    }
+
+    public boolean isTypeCompatible(String expected, String actual, SymbolTable currentScope) {
+        if (expected == null || actual == null)
+            return false;
+        if (expected.equals(actual))
+            return true;
+        if (expected.equals("unknown") || actual.equals("unknown"))
+            return true;
+
+        if (actual.equals("null")) {
+            return !expected.equals("int") && !expected.equals("boolean") && !expected.equals("char");
+        }
+
+        Queue<String> queue = new LinkedList<>();
+        Set<String> visited = new HashSet<>();
+
+        queue.add(actual);
+
+        while (!queue.isEmpty()) {
+            String currentType = queue.poll();
+
+            if (currentType.equals(expected))
+                return true;
+
+            if (!visited.add(currentType))
+                continue;
+
+            SymbolInfo info = currentScope.lookup(currentType);
+            if (info != null) {
+                if (info.parentClass != null) {
+                    queue.add(info.parentClass);
+                }
+                if (info.interfaces != null) {
+                    queue.addAll(info.interfaces);
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private boolean matchesArguments(SymbolInfo callable, List<String> argTypes,
+            SymbolTable currentScope) {
+        if (callable.parameters.size() != argTypes.size())
+            return false;
+        for (int i = 0; i < argTypes.size(); i++) {
+            if (!isTypeCompatible(callable.parameters.get(i).type, argTypes.get(i), currentScope))
+                return false;
+        }
+        return true;
+    }
+
+    private String resolveMethodCall(String targetType, String methodName,
+            List<String> argTypes, ParserRuleContext ctx, SymbolTable currentScope) {
+
+        if (targetType.equals("unknown"))
+            return "unknown";
+
+        SymbolTable classScope;
+        SymbolTable myClass = currentScope.getCurrentClassScope();
+        if (myClass != null && targetType.equals(myClass.getScopeName())) {
+            classScope = myClass;
+        } else {
+            SymbolInfo targetInfo = currentScope.lookup(targetType);
+            if (targetInfo != null && targetInfo.symbolType == SymbolInfo.SymbolType.IMPORT) {
+                return "unknown";
+            }
+            classScope = currentScope.findTypeScope(targetType);
+        }
+
+        if (classScope == null) {
+            error(currentScope, ctx, "Cannot resolve class type for object: " + targetType);
+            return "unknown";
+        }
+
+        Set<String> visited = new HashSet<>();
+        Queue<SymbolTable> queue = new LinkedList<>();
+        queue.add(classScope);
+
+        while (!queue.isEmpty()) {
+            SymbolTable search = queue.poll();
+            if (!visited.add(search.getScopeName()))
+                continue;
+
+            for (SymbolInfo m : search.lookupMethodOverloads(methodName)) {
+                if (matchesArguments(m, argTypes, currentScope)) {
+                    return (m.dataType != null) ? m.dataType : "void";
+                }
+            }
+
+            SymbolInfo typeInfo = currentScope.lookup(search.getScopeName());
+            if (typeInfo != null) {
+                if (typeInfo.parentClass != null) {
+                    SymbolTable p = currentScope.findTypeScope(typeInfo.parentClass);
+                    if (p != null)
+                        queue.add(p);
+                }
+                if (typeInfo.interfaces != null) {
+                    for (String interfaceName : typeInfo.interfaces) {
+                        SymbolTable is = currentScope.findTypeScope(interfaceName);
+                        if (is != null)
+                            queue.add(is);
+                    }
+                }
+            }
+        }
+
+        error(currentScope, ctx, String.format(
+                "No method '%s' in class '%s' matches the arguments: %s",
+                methodName, classScope.getScopeName(), argTypes));
+        return "unknown";
+    }
+
+    private String logical(String leftType,
+            javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
+            String op, ParserRuleContext ctx, SymbolTable currentScope) {
+        String rightType = getPrimaryExpressionType(rightCtx, currentScope);
+        if ((!leftType.equals("boolean") && !leftType.equals("unknown"))
+                || (!rightType.equals("boolean") && !rightType.equals("unknown"))) {
+            error(currentScope, ctx, String.format(
+                    "Operator '%s' requires boolean operands, found: %s and %s",
+                    op, leftType, rightType));
+        }
+        return "boolean";
+    }
+
+    private String equality(String leftType,
+            javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
+            String op, ParserRuleContext ctx, SymbolTable currentScope) {
+        String rightType = getPrimaryExpressionType(rightCtx, currentScope);
+        boolean ok = leftType.equals("unknown") || rightType.equals("unknown")
+                || isTypeCompatible(leftType, rightType, currentScope)
+                || isTypeCompatible(rightType, leftType, currentScope);
+        if (!ok) {
+            error(currentScope, ctx, String.format(
+                    "Operator '%s' cannot compare incompatible types: %s and %s",
+                    op, leftType, rightType));
+        }
+        return "boolean";
+    }
+
+    private boolean isNumeric(String t) {
+        return t.equals("int") || t.equals("unknown");
+    }
+
+    private String relational(String leftType,
+            javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
+            String op, ParserRuleContext ctx, SymbolTable currentScope) {
+        String rightType = getPrimaryExpressionType(rightCtx, currentScope);
+        if (!isNumeric(leftType) || !isNumeric(rightType)) {
+            error(currentScope, ctx, String.format(
+                    "Operator '%s' requires int operands, found: %s and %s",
+                    op, leftType, rightType));
+        }
+        return "boolean";
+    }
+
+    private String arithmetic(String leftType,
+            javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
+            String op, ParserRuleContext ctx, SymbolTable currentScope) {
+        String rightType = getPrimaryExpressionType(rightCtx, currentScope);
+
+        if (op.equals("+") && (leftType.equals("String") || rightType.equals("String"))) {
+            return "String";
+        }
+
+        if (!isNumeric(leftType) || !isNumeric(rightType)) {
+            error(currentScope, ctx, String.format(
+                    "Operator '%s' requires int operands, found: %s and %s",
+                    op, leftType, rightType));
+        }
+        return "int";
     }
 
     private String getExpressionPrimeType(javaMinusMinus2Parser.ExpressionPrimeContext ctx,
@@ -154,6 +377,35 @@ public class TypeChecker {
         return leftType;
     }
 
+    private void checkConstructorCall(String className, List<String> argTypes,
+            ParserRuleContext ctx, SymbolTable currentScope) {
+        SymbolTable classScope = currentScope.findTypeScope(className);
+        if (classScope == null)
+            return;
+
+        List<SymbolInfo> ctors = new ArrayList<>();
+        for (SymbolInfo s : classScope.lookupMethodOverloads(className)) {
+            if (s.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR)
+                ctors.add(s);
+        }
+
+        if (ctors.isEmpty()) {
+            if (!argTypes.isEmpty()) {
+                error(currentScope, ctx, String.format(
+                        "Class '%s' has no constructor matching the arguments: %s",
+                        className, argTypes));
+            }
+            return;
+        }
+        for (SymbolInfo c : ctors) {
+            if (matchesArguments(c, argTypes, currentScope))
+                return;
+        }
+        error(currentScope, ctx, String.format(
+                "No constructor of class '%s' matches the arguments: %s",
+                className, argTypes));
+    }
+
     public String getPrimaryExpressionType(javaMinusMinus2Parser.PrimaryExpressionContext ctx,
             SymbolTable currentScope) {
         lastPrimarySymbol = null;
@@ -182,7 +434,7 @@ public class TypeChecker {
         if (ctx instanceof javaMinusMinus2Parser.IdentExprContext) {
             String name = ctx.getText();
 
-            SymbolInfo sym = currentScope.Lookup(name);
+            SymbolInfo sym = currentScope.lookup(name);
             if (sym != null) {
                 lastPrimarySymbol = sym;
 
@@ -221,7 +473,7 @@ public class TypeChecker {
 
             String className = c.getChild(1).getText();
 
-            SymbolInfo classInfo = currentScope.Lookup(className);
+            SymbolInfo classInfo = currentScope.lookup(className);
             if (classInfo == null || classInfo.symbolType != SymbolInfo.SymbolType.CLASS) {
                 error(currentScope, ctx, "Cannot instantiate unknown class: " + className);
                 return "unknown";
@@ -258,256 +510,4 @@ public class TypeChecker {
         return "unknown";
     }
 
-    private String arithmetic(String leftType,
-            javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
-            String op, ParserRuleContext ctx, SymbolTable currentScope) {
-        String rightType = getPrimaryExpressionType(rightCtx, currentScope);
-
-        if (op.equals("+") && (leftType.equals("String") || rightType.equals("String"))) {
-            return "String";
-        }
-
-        if (!isNumeric(leftType) || !isNumeric(rightType)) {
-            error(currentScope, ctx, String.format(
-                    "Operator '%s' requires int operands, found: %s and %s",
-                    op, leftType, rightType));
-        }
-        return "int";
-    }
-
-    private String relational(String leftType,
-            javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
-            String op, ParserRuleContext ctx, SymbolTable currentScope) {
-        String rightType = getPrimaryExpressionType(rightCtx, currentScope);
-        if (!isNumeric(leftType) || !isNumeric(rightType)) {
-            error(currentScope, ctx, String.format(
-                    "Operator '%s' requires int operands, found: %s and %s",
-                    op, leftType, rightType));
-        }
-        return "boolean";
-    }
-
-    private String equality(String leftType,
-            javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
-            String op, ParserRuleContext ctx, SymbolTable currentScope) {
-        String rightType = getPrimaryExpressionType(rightCtx, currentScope);
-        boolean ok = leftType.equals("unknown") || rightType.equals("unknown")
-                || isTypeCompatible(leftType, rightType, currentScope)
-                || isTypeCompatible(rightType, leftType, currentScope);
-        if (!ok) {
-            error(currentScope, ctx, String.format(
-                    "Operator '%s' cannot compare incompatible types: %s and %s",
-                    op, leftType, rightType));
-        }
-        return "boolean";
-    }
-
-    private String logical(String leftType,
-            javaMinusMinus2Parser.PrimaryExpressionContext rightCtx,
-            String op, ParserRuleContext ctx, SymbolTable currentScope) {
-        String rightType = getPrimaryExpressionType(rightCtx, currentScope);
-        if ((!leftType.equals("boolean") && !leftType.equals("unknown"))
-                || (!rightType.equals("boolean") && !rightType.equals("unknown"))) {
-            error(currentScope, ctx, String.format(
-                    "Operator '%s' requires boolean operands, found: %s and %s",
-                    op, leftType, rightType));
-        }
-        return "boolean";
-    }
-
-    private boolean isNumeric(String t) {
-        return t.equals("int") || t.equals("unknown");
-    }
-
-    private String resolveMethodCall(String targetType, String methodName,
-            List<String> argTypes, ParserRuleContext ctx, SymbolTable currentScope) {
-
-        if (targetType.equals("unknown"))
-            return "unknown";
-
-        SymbolTable classScope;
-        SymbolTable myClass = currentScope.getCurrentClassScope();
-        if (myClass != null && targetType.equals(myClass.getScopeName())) {
-            classScope = myClass;
-        } else {
-            SymbolInfo targetInfo = currentScope.Lookup(targetType);
-            if (targetInfo != null && targetInfo.symbolType == SymbolInfo.SymbolType.IMPORT) {
-                return "unknown";
-            }
-            classScope = currentScope.findTypeScope(targetType);
-        }
-
-        if (classScope == null) {
-            error(currentScope, ctx, "Cannot resolve class type for object: " + targetType);
-            return "unknown";
-        }
-
-        Set<String> visited = new HashSet<>();
-        Queue<SymbolTable> queue = new LinkedList<>();
-        queue.add(classScope);
-
-        while (!queue.isEmpty()) {
-            SymbolTable search = queue.poll();
-            if (!visited.add(search.getScopeName()))
-                continue;
-
-            for (SymbolInfo m : search.lookupMethodOverloads(methodName)) {
-                if (matchesArguments(m, argTypes, currentScope)) {
-                    return (m.dataType != null) ? m.dataType : "void";
-                }
-            }
-
-            SymbolInfo typeInfo = currentScope.Lookup(search.getScopeName());
-            if (typeInfo != null) {
-                if (typeInfo.parentClass != null) {
-                    SymbolTable p = currentScope.findTypeScope(typeInfo.parentClass);
-                    if (p != null)
-                        queue.add(p);
-                }
-                if (typeInfo.interfaces != null) {
-                    for (String interfaceName : typeInfo.interfaces) {
-                        SymbolTable is = currentScope.findTypeScope(interfaceName);
-                        if (is != null)
-                            queue.add(is);
-                    }
-                }
-            }
-        }
-
-        error(currentScope, ctx, String.format(
-                "No method '%s' in class '%s' matches the arguments: %s",
-                methodName, classScope.getScopeName(), argTypes));
-        return "unknown";
-    }
-
-    private void checkConstructorCall(String className, List<String> argTypes,
-            ParserRuleContext ctx, SymbolTable currentScope) {
-        SymbolTable classScope = currentScope.findTypeScope(className);
-        if (classScope == null)
-            return;
-
-        List<SymbolInfo> ctors = new ArrayList<>();
-        for (SymbolInfo s : classScope.lookupMethodOverloads(className)) {
-            if (s.symbolType == SymbolInfo.SymbolType.CONSTRUCTOR)
-                ctors.add(s);
-        }
-
-        if (ctors.isEmpty()) {
-            if (!argTypes.isEmpty()) {
-                error(currentScope, ctx, String.format(
-                        "Class '%s' has no constructor matching the arguments: %s",
-                        className, argTypes));
-            }
-            return;
-        }
-        for (SymbolInfo c : ctors) {
-            if (matchesArguments(c, argTypes, currentScope))
-                return;
-        }
-        error(currentScope, ctx, String.format(
-                "No constructor of class '%s' matches the arguments: %s",
-                className, argTypes));
-    }
-
-    private boolean matchesArguments(SymbolInfo callable, List<String> argTypes,
-            SymbolTable currentScope) {
-        if (callable.parameters.size() != argTypes.size())
-            return false;
-        for (int i = 0; i < argTypes.size(); i++) {
-            if (!isTypeCompatible(callable.parameters.get(i).type, argTypes.get(i), currentScope))
-                return false;
-        }
-        return true;
-    }
-
-    public boolean isTypeCompatible(String expected, String actual, SymbolTable currentScope) {
-        if (expected == null || actual == null)
-            return false;
-        if (expected.equals(actual))
-            return true;
-        if (expected.equals("unknown") || actual.equals("unknown"))
-            return true;
-
-        if (actual.equals("null")) {
-            return !expected.equals("int") && !expected.equals("boolean") && !expected.equals("char");
-        }
-
-        Queue<String> queue = new LinkedList<>();
-        Set<String> visited = new HashSet<>();
-
-        queue.add(actual);
-
-        while (!queue.isEmpty()) {
-            String currentType = queue.poll();
-
-            if (currentType.equals(expected))
-                return true;
-
-            if (!visited.add(currentType))
-                continue;
-
-            SymbolInfo info = currentScope.Lookup(currentType);
-            if (info != null) {
-                if (info.parentClass != null) {
-                    queue.add(info.parentClass);
-                }
-                if (info.interfaces != null) {
-                    queue.addAll(info.interfaces);
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private Integer extractConstantIndex(javaMinusMinus2Parser.ExpressionContext indexCtx) {
-        if (indexCtx == null)
-            return null;
-        if (indexCtx.expressionPrime() != null
-                && !(indexCtx.expressionPrime() instanceof javaMinusMinus2Parser.EmptyExprTailContext))
-            return null;
-
-        javaMinusMinus2Parser.PrimaryExpressionContext p = indexCtx.primaryExpression();
-        try {
-            if (p instanceof javaMinusMinus2Parser.IntLitExprContext) {
-                return Integer.parseInt(p.getText().trim());
-            }
-            if (p instanceof javaMinusMinus2Parser.UnaryMinusExprContext) {
-                javaMinusMinus2Parser.PrimaryExpressionContext inner = ((javaMinusMinus2Parser.UnaryMinusExprContext) p)
-                        .primaryExpression();
-                if (inner instanceof javaMinusMinus2Parser.IntLitExprContext) {
-                    return -Integer.parseInt(inner.getText().trim());
-                }
-            }
-        } catch (NumberFormatException ignored) {
-        }
-        return null;
-    }
-
-    private void checkArrayBounds(javaMinusMinus2Parser.ExpressionContext indexCtx,
-            SymbolInfo arraySym, SymbolTable currentScope) {
-        Integer v = extractConstantIndex(indexCtx);
-        if (v == null)
-            return;
-
-        if (v < 0) {
-            error(currentScope, indexCtx, "Array index cannot be negative: " + v);
-            return;
-        }
-
-        if (arraySym != null && arraySym.arraySize > 0 && v >= arraySym.arraySize) {
-            error(currentScope, indexCtx, String.format(
-                    "Array index %d is out of bounds for array '%s' of size %d",
-                    v, arraySym.name, arraySym.arraySize));
-        }
-    }
-
-    private void error(SymbolTable scope, ParserRuleContext ctx, String message) {
-        String formatted = String.format("Line %d:%d - %s",
-                ctx.getStart().getLine(),
-                ctx.getStart().getCharPositionInLine(),
-                message);
-        errors.add(formatted);
-        scope.addSemanticError(formatted);
-    }
 }

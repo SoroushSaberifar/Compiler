@@ -1,5 +1,4 @@
 import org.antlr.v4.runtime.Token;
-
 import java.util.*;
 import grammar.javaMinusMinus2Parser;
 import grammar.javaMinusMinus2BaseListener;
@@ -7,17 +6,68 @@ import grammar.javaMinusMinus2BaseListener;
 public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
 
     private final SymbolTable globalTable;
-    private SymbolTable currentScope;
-
     private final Deque<SymbolTable> scopeStack = new ArrayDeque<>();
     private final Deque<Integer> childIndexStack = new ArrayDeque<>();
-
     private final TypeChecker typeChecker;
     private final List<String> errors = new ArrayList<>();
-
+    private SymbolTable currentScope;
+    private String currentClassName = null;
     private int loopDepth = 0;
 
-    private String currentClassName = null;
+    private String getParentOf(String className) {
+        SymbolInfo cls = globalTable.lookup(className);
+        return (cls != null) ? cls.parentClass : null;
+    }
+
+    private String simpleName(String qualified) {
+        int dot = qualified.lastIndexOf('.');
+        return (dot >= 0) ? qualified.substring(dot + 1) : qualified;
+    }
+
+    private void checkInheritanceCycles() {
+        Set<String> reported = new HashSet<>();
+        for (SymbolInfo info : globalTable.getAllSymbols()) {
+            if (info.symbolType != SymbolInfo.SymbolType.CLASS
+                    && info.symbolType != SymbolInfo.SymbolType.INTERFACE)
+                continue;
+            if (reported.contains(info.name))
+                continue;
+
+            Map<String, Integer> order = new HashMap<>();
+            List<String> path = new ArrayList<>();
+            String current = info.name;
+            while (current != null && !order.containsKey(current)
+                    && !reported.contains(current)) {
+                order.put(current, path.size());
+                path.add(current);
+                current = getParentOf(current);
+            }
+            if (current != null && order.containsKey(current)) {
+                List<String> cycle = path.subList(order.get(current), path.size());
+                reported.addAll(cycle);
+                addError("Inheritance cycle detected: "
+                        + String.join(" -> ", cycle) + " -> " + current, null);
+            }
+        }
+    }
+
+    private void validateImports() {
+        Set<String> seen = new HashSet<>();
+        for (SymbolInfo info : globalTable.getAllSymbols()) {
+            if (info.symbolType != SymbolInfo.SymbolType.IMPORT)
+                continue;
+            if (!seen.add(info.name)) {
+                addError("Duplicate import '" + info.name + "'", null);
+            }
+            SymbolInfo target = globalTable.lookup(simpleName(info.name));
+            boolean defined = target != null
+                    && (target.symbolType == SymbolInfo.SymbolType.CLASS
+                            || target.symbolType == SymbolInfo.SymbolType.INTERFACE);
+            if (!defined) {
+                addError("Import of undefined class '" + info.name + "'", null);
+            }
+        }
+    }
 
     public SemanticAnalyzer(SymbolTable globalTable) {
         this.globalTable = globalTable;
@@ -51,6 +101,82 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
     private void popScope() {
         childIndexStack.pop();
         currentScope = scopeStack.pop();
+    }
+
+    private void validateMethodReturn(javaMinusMinus2Parser.MethodDeclContext ctx) {
+        String declaredReturn = (ctx.type() != null) ? ctx.type().getText() : "void";
+        javaMinusMinus2Parser.MethodBodyContext body = ctx.methodBody();
+
+        boolean hasReturn = body != null && body.RETURN() != null;
+        javaMinusMinus2Parser.ExpressionContext retExpr = (body != null) ? body.expression() : null;
+
+        if (declaredReturn.equals("void")) {
+            if (retExpr != null) {
+                addError("Void method '" + ctx.Identifier().getText()
+                        + "' cannot return a value",
+                        retExpr.getStart());
+            }
+        } else {
+            if (!hasReturn || retExpr == null) {
+                addError("Method '" + ctx.Identifier().getText()
+                        + "' must return a value of type '" + declaredReturn + "'",
+                        ctx.getStart());
+            } else {
+                String actual = typeChecker.getExpressionType(retExpr, currentScope);
+                if (!actual.equals("unknown")
+                        && !typeChecker.isTypeCompatible(declaredReturn, actual, currentScope)) {
+                    addError("Return type mismatch in method '"
+                            + ctx.Identifier().getText() + "': expected '"
+                            + declaredReturn + "', found '" + actual + "'",
+                            retExpr.getStart());
+                }
+            }
+        }
+    }
+
+    private void validateConstructorReturn(javaMinusMinus2Parser.CtorDeclContext ctx) {
+        javaMinusMinus2Parser.MethodBodyContext body = ctx.methodBody();
+        if (body != null && body.expression() != null) {
+            addError("Constructor '" + ctx.Identifier().getText()
+                    + "' cannot return a value",
+                    body.expression().getStart());
+        }
+    }
+
+    private String baseIdentifier(String designatorText) {
+        int dot = designatorText.indexOf('.');
+        int bracket = designatorText.indexOf('[');
+        int cut = designatorText.length();
+        if (dot >= 0)
+            cut = Math.min(cut, dot);
+        if (bracket >= 0)
+            cut = Math.min(cut, bracket);
+        return designatorText.substring(0, cut);
+    }
+
+    private String resolveDesignatorType(String designatorText, SymbolInfo base) {
+        if (designatorText.endsWith(".length"))
+            return "int";
+        if (designatorText.contains("[") && base.dataType != null
+                && base.dataType.endsWith("[]")) {
+            return base.dataType.substring(0, base.dataType.length() - 2);
+        }
+        return base.dataType;
+    }
+
+    private void addError(String message, Token token) {
+        if (token != null) {
+            errors.add("Line " + token.getLine() + ":"
+                    + token.getCharPositionInLine() + " - " + message);
+        } else {
+            errors.add(message);
+        }
+    }
+
+    public List<String> getErrors() {
+        List<String> all = new ArrayList<>(errors);
+        all.addAll(typeChecker.getErrors());
+        return all;
     }
 
     @Override
@@ -192,14 +318,14 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
 
         if (baseName.equals("this")) {
             String field = baseIdentifier(designatorText.substring("this.".length()));
-            lhs = currentScope.Lookup(field);
+            lhs = currentScope.lookup(field);
             if (lhs == null) {
                 addError("Undeclared field '" + field + "'", ctx.getStart());
                 return;
             }
             lhsType = resolveDesignatorType(designatorText, lhs);
         } else {
-            lhs = currentScope.Lookup(baseName);
+            lhs = currentScope.lookup(baseName);
             if (lhs == null) {
                 addError("Undeclared variable '" + baseName + "'", ctx.getStart());
                 return;
@@ -237,7 +363,7 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
                     ctx.getStart());
         }
 
-        SymbolInfo sym = currentScope.Lookup(ctx.Identifier().getText());
+        SymbolInfo sym = currentScope.lookup(ctx.Identifier().getText());
         if (sym != null)
             sym.isInitialized = true;
     }
@@ -256,7 +382,7 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
                     ctx.getStart());
         }
 
-        SymbolInfo sym = currentScope.Lookup(ctx.Identifier().getText());
+        SymbolInfo sym = currentScope.lookup(ctx.Identifier().getText());
         if (sym != null)
             sym.isInitialized = true;
     }
@@ -270,144 +396,4 @@ public class SemanticAnalyzer extends javaMinusMinus2BaseListener {
         }
     }
 
-    private void validateMethodReturn(javaMinusMinus2Parser.MethodDeclContext ctx) {
-        String declaredReturn = (ctx.type() != null) ? ctx.type().getText() : "void";
-        javaMinusMinus2Parser.MethodBodyContext body = ctx.methodBody();
-
-        boolean hasReturn = body != null && body.RETURN() != null;
-        javaMinusMinus2Parser.ExpressionContext retExpr = (body != null) ? body.expression() : null;
-
-        if (declaredReturn.equals("void")) {
-            if (retExpr != null) {
-                addError("Void method '" + ctx.Identifier().getText()
-                        + "' cannot return a value",
-                        retExpr.getStart());
-            }
-        } else {
-            if (!hasReturn || retExpr == null) {
-                addError("Method '" + ctx.Identifier().getText()
-                        + "' must return a value of type '" + declaredReturn + "'",
-                        ctx.getStart());
-            } else {
-                String actual = typeChecker.getExpressionType(retExpr, currentScope);
-                if (!actual.equals("unknown")
-                        && !typeChecker.isTypeCompatible(declaredReturn, actual, currentScope)) {
-                    addError("Return type mismatch in method '"
-                            + ctx.Identifier().getText() + "': expected '"
-                            + declaredReturn + "', found '" + actual + "'",
-                            retExpr.getStart());
-                }
-            }
-        }
-    }
-
-    private void validateConstructorReturn(javaMinusMinus2Parser.CtorDeclContext ctx) {
-        javaMinusMinus2Parser.MethodBodyContext body = ctx.methodBody();
-        if (body != null && body.expression() != null) {
-            addError("Constructor '" + ctx.Identifier().getText()
-                    + "' cannot return a value",
-                    body.expression().getStart());
-        }
-    }
-
-    private void checkInheritanceCycles() {
-        Set<String> reported = new HashSet<>();
-        for (SymbolInfo info : globalTable.getAllSymbols()) {
-            if (info.symbolType != SymbolInfo.SymbolType.CLASS
-                    && info.symbolType != SymbolInfo.SymbolType.INTERFACE)
-                continue;
-            if (reported.contains(info.name))
-                continue;
-
-            Map<String, Integer> order = new HashMap<>();
-            List<String> path = new ArrayList<>();
-            String current = info.name;
-            while (current != null && !order.containsKey(current)
-                    && !reported.contains(current)) {
-                order.put(current, path.size());
-                path.add(current);
-                current = getParentOf(current);
-            }
-            if (current != null && order.containsKey(current)) {
-                List<String> cycle = path.subList(order.get(current), path.size());
-                reported.addAll(cycle);
-                addError("Inheritance cycle detected: "
-                        + String.join(" -> ", cycle) + " -> " + current, null);
-            }
-        }
-    }
-
-    private String getParentOf(String className) {
-        SymbolInfo cls = globalTable.Lookup(className);
-        return (cls != null) ? cls.parentClass : null;
-    }
-
-    private String simpleName(String qualified) {
-        int dot = qualified.lastIndexOf('.');
-        return (dot >= 0) ? qualified.substring(dot + 1) : qualified;
-    }
-
-    private void validateImports() {
-        Set<String> seen = new HashSet<>();
-        for (SymbolInfo info : globalTable.getAllSymbols()) {
-            if (info.symbolType != SymbolInfo.SymbolType.IMPORT)
-                continue;
-            if (!seen.add(info.name)) {
-                addError("Duplicate import '" + info.name + "'", null);
-            }
-            SymbolInfo target = globalTable.Lookup(simpleName(info.name));
-            boolean defined = target != null
-                    && (target.symbolType == SymbolInfo.SymbolType.CLASS
-                            || target.symbolType == SymbolInfo.SymbolType.INTERFACE);
-            if (!defined) {
-                addError("Import of undefined class '" + info.name + "'", null);
-            }
-        }
-    }
-
-    private String baseIdentifier(String designatorText) {
-        int dot = designatorText.indexOf('.');
-        int bracket = designatorText.indexOf('[');
-        int cut = designatorText.length();
-        if (dot >= 0)
-            cut = Math.min(cut, dot);
-        if (bracket >= 0)
-            cut = Math.min(cut, bracket);
-        return designatorText.substring(0, cut);
-    }
-
-    private String resolveDesignatorType(String designatorText, SymbolInfo base) {
-        if (designatorText.endsWith(".length"))
-            return "int";
-        if (designatorText.contains("[") && base.dataType != null
-                && base.dataType.endsWith("[]")) {
-            return base.dataType.substring(0, base.dataType.length() - 2);
-        }
-        return base.dataType;
-    }
-
-    private void addError(String message, Token token) {
-        if (token != null) {
-            errors.add("Line " + token.getLine() + ":"
-                    + token.getCharPositionInLine() + " - " + message);
-        } else {
-            errors.add(message);
-        }
-    }
-
-    public List<String> getErrors() {
-        List<String> all = new ArrayList<>(errors);
-        all.addAll(typeChecker.getErrors());
-        return all;
-    }
-
-    public boolean hasErrors() {
-        return !errors.isEmpty() || !typeChecker.getErrors().isEmpty();
-    }
-
-    public void printErrors() {
-        for (String e : getErrors()) {
-            System.err.println("Semantic Error: " + e);
-        }
-    }
 }
